@@ -48,6 +48,17 @@ if __name__ == "__main__":
     print(f"Output max diff: {(out - out_ref).abs().max().item()}")
     print(f"Output mean diff: {(out - out_ref).abs().mean().item()}")
 
+    g = torch.randn_like(out)
+    (dq, dk, dv,) = torch.autograd.grad(out, (q, k, v), g)
+    (dq_ref, dk_ref, dv_ref,) = torch.autograd.grad(out_ref, (q, k, v), g)
+    
+    print(f"dQ max diff: {(dq - dq_ref).abs().max().item()}")
+    print(f"dK max diff: {(dk - dk_ref).abs().max().item()}")
+    print(f"dV max diff: {(dv - dv_ref).abs().max().item()}")
+    print(f"dQ mean diff: {(dq - dq_ref).abs().mean().item()}")
+    print(f"dK mean diff: {(dk - dk_ref).abs().mean().item()}")
+    print(f"dV mean diff: {(dv - dv_ref).abs().mean().item()}")
+
 
 
 
