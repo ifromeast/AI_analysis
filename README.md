@@ -1,2 +1,2 @@
 # AI_analysis
-analysis of problems of AI and Math
+analyse problems of AI with Math and Code
