@@ -28,9 +28,55 @@ dK mean diff: 8.285045623779297e-06
 dV mean diff: 8.344650268554688e-06
 ```
 
-
-
 ### 分布式运行
+验证单卡上的精度是重要的，但是也是不够的，因为实际使用中，我们通常需要多卡分布式运行。因此，我们还需要验证多卡上 Attention 的精度，验证过程在 8 卡上运行。运行代码如下：
+```
+torchrun --nproc_per_node=8 basic/test_flash_attn_qkvpacked_func_dist.py
+```
+输出结果如下：
+```
+##############################
+# forward:
+##############################
+rank 4 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 6 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 2 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 3 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 5 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 1 out (distributed) - out_ref (non-distributed) diff: 0.001953125
+rank 7 out (distributed) - out_ref (non-distributed) diff: 0.0009765625
+rank 0 out (distributed) - out_ref (non-distributed) diff: 0.0078125
+##############################
+# backward:
+##############################
+dq diff:
+Rank[0] max 0.00781, mean 0.000165
+Rank[1] max 0.00195, mean 8.11e-05
+Rank[2] max 0.00195, mean 6.29e-05
+Rank[3] max 0.000977, mean 5.32e-05
+Rank[4] max 0.000977, mean 4.74e-05
+Rank[5] max 0.000977, mean 4.27e-05
+Rank[6] max 0.000977, mean 3.98e-05
+Rank[7] max 0.000488, mean 3.7e-05
+dk diff:
+Rank[0] max 0.0156, mean 0.000174
+Rank[1] max 0.00195, mean 7.3e-05
+Rank[2] max 0.00391, mean 5.2e-05
+Rank[3] max 0.000977, mean 3.96e-05
+Rank[4] max 0.000977, mean 3.05e-05
+Rank[5] max 0.000488, mean 2.32e-05
+Rank[6] max 0.000488, mean 1.67e-05
+Rank[7] max 0.000488, mean 8.23e-06
+dv diff:
+Rank[0] max 0.0156, mean 0.000177
+Rank[1] max 0.00195, mean 7.34e-05
+Rank[2] max 0.000977, mean 5.2e-05
+Rank[3] max 0.000977, mean 4.01e-05
+Rank[4] max 0.000488, mean 3.1e-05
+Rank[5] max 0.000488, mean 2.35e-05
+Rank[6] max 0.000488, mean 1.68e-05
+Rank[7] max 0.000244, mean 8.4e-06
+```
 
 ### 性能基准
 
