@@ -56,14 +56,12 @@ device = torch.device("cuda:{}".format(rank))
 
 ring_comm = RingComm(process_group=None)
 
-# 创建一个简单的张量
 tensor = torch.tensor([rank, rank+1], dtype=torch.float32, device=device)
 print("rank {} tensor {}".format(rank, tensor))
 
 recv_tensor = ring_comm.send_recv(tensor)
 # Commit the operations
 ring_comm.commit()
-
 # Wait for the operations to complete
 ring_comm.wait()
 
