@@ -45,15 +45,15 @@ $$ softmax_1^{\prime}(x_i) = \frac{e^{x_i}}{\sum_{i=1}^{len(X_1)} e^{x_i} + \sum
 
 这样我们就找到了递推关系，在实际的计算中，我们只需要保存当前的“全局” $lse$ 和 $softmax$ 值即可
 
-$$new\_lse = \log (e^{lse} + e^{block\_lse})$$
-$$softmax^\prime = softmax * e^{lse-new\_lse}$$
+$$lse_{new} = \log (e^{lse} + e^{lse_{block}})$$
+$$softmax^\prime = softmax * e^{lse-lse_{new}}$$
 
 ## 2. Ring Attention 原理
 弄清楚 softmax 的分段计算的过程之后，我们就可以开始研究 Ring Attention 的原理了。
 
 如果我们将 Q 进行拆分，那么需要全部的 K,V 才能实现 softmax 的计算，即：
 
-$$\text{attention}(q_x,K,V)=\frac{\sum_{y=1}^{\text{seq\_len}}e^{w_{xy}}v_y}{\sum_{y=1}^{\text{seq\_len}}e^{w_{xy}}}$$
+$$\text{attention}(q_x,K,V)=\frac{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}v_y}{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}}$$
 其中 $w_{xy}=q_xk_y^T/\sqrt{d}$ 。
 
 计算过程如下图所示：
