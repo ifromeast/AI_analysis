@@ -1,4 +1,4 @@
-# Flash Attention 及其修改版的精度及性能基准
+# Flash Attention 的精度及性能基准
 
 ## 1. 标准 Flash Attention
 标准 Flash Attention(本文采用的版本为flash-attn==2.6.3) 提供了 3 个最基本的 Attention kernel，分别是：
