@@ -92,10 +92,10 @@ $$
 $$
 \begin{aligned} 
 B_{12} &= B_1 + B_2 \\ 
-\text{attn}_{12} &= \text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}} \\ 
+attn_{12} &= attn_1\frac{B_{1}}{B_{12}}+attn_2\frac{B_{2}}{B_{12}} \\ 
 B_{123} &= B_{12} + B_{3} \\ 
-\text{attn}_{123} &= \text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
-\text{attn}=\text{attn}_{1\dots n} &= \text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} 
+attn_{123} &= attn_{12}\frac{B_{12}}{B_{123}}+attn_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
+attn=attn_{1\dots n} &= attn_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+attn_n\frac{B_{n}}{B_{1\dots n}} 
 \end{aligned}
 $$
 
