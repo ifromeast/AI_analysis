@@ -14,6 +14,12 @@ if __name__ == "__main__":
     d = 128
     nheads_k = nheads = 8
     dtype = torch.float16
+    dropout_p = 0
+    causal = True
+    deterministic = False
+    window_size=(-1, -1)
+    alibi_slopes, attn_bias = None, None
+    dropout_mask = None
 
     assert nheads % nheads_k == 0
     # window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
@@ -24,12 +30,12 @@ if __name__ == "__main__":
 
     out, lse, S_dmask = flash_attn_qkvpacked_func(
             qkv,
-            # dropout_p,
-            # causal=causal,
-            # window_size=window_size,
-            # softcap=softcap,
-            # alibi_slopes=alibi_slopes,
-            # deterministic=deterministic,
+            dropout_p,
+            causal=causal,
+            window_size=window_size,
+            softcap=0.0,
+            alibi_slopes=alibi_slopes,
+            deterministic=deterministic,
             return_attn_probs=True,
         )
     
@@ -37,12 +43,12 @@ if __name__ == "__main__":
             q, k, v,
             None,
             None,
-            # attn_bias,
-            # dropout_p,
-            # dropout_mask,
-            # causal=causal,
-            # window_size=window_size,
-            # softcap=softcap,
+            attn_bias,
+            dropout_p,
+            dropout_mask,
+            causal=causal,
+            window_size=window_size,
+            softcap=0.0,
         )
     
     print(f"Output max diff: {(out - out_ref).abs().max().item()}")
@@ -51,10 +57,8 @@ if __name__ == "__main__":
     dout = torch.randn(batch_size, seqlen, nheads, d, device=device, dtype=dtype)
     out.backward(dout)
     dqkv = qkv.grad
-    print(dqkv.shape)
 
     (dq_ref, dk_ref, dv_ref,) = torch.autograd.grad(out_ref, (q, k, v), dout)
-    print(dq_ref.shape)
     
     print(f"dQ max diff: {(dqkv[:,:,0] - dq_ref).abs().max().item()}")
     print(f"dK max diff: {(dqkv[:,:,1] - dk_ref).abs().max().item()}")

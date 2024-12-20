@@ -7,7 +7,7 @@ from utils import set_seed
 if __name__ == "__main__":
     
     device = "cuda"
-    set_seed(rank=0, seed=42)  # set seed
+    set_seed(rank=0, seed=32)  # set seed
     batch_size = 4
     seqlen_q = seqlen_k = 1024
     d = 128
@@ -40,12 +40,12 @@ if __name__ == "__main__":
             q, k, v,
             None,
             None,
-            # attn_bias,
-            # dropout_p,
-            # dropout_mask,
-            # causal=causal,
-            # window_size=window_size,
-            # softcap=softcap,
+            None,
+            dropout_p,
+            None,
+            causal=causal,
+            window_size=window_size,
+            softcap=0.0,
         )
     
     print(f"Output max diff: {(out - out_ref).abs().max().item()}")
