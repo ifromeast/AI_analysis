@@ -103,18 +103,18 @@ $$
 
 $$
 \begin{aligned}
-\text{LSE}_{12} &= \log (B_1 + B_2) \\
+LSE_{12} &= \log (B_1 + B_2) \\
 &= \log(B_1 \times (1 + \frac{B_2}{B_1})) \\
 &= \log B_1 + \log(1 + e^{\log B_2 - \log B_1}) \\
-&= \text{LSE}_1 + \log(1 + e^{\text{LSE}_2 - \text{LSE}_1})
+&= LSE_1 + \log(1 + e^{LSE_2 - LSE_1})
 \end{aligned}
 $$
 
 
 $$
 \begin{aligned} 
-\text{attn}_{12} &= \text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ 
-&=\text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}}+\text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} 
+attn_{12} &= attn_1\frac{B_{1}}{B_{12}}+attn_2\frac{B_{2}}{B_{12}}\\ 
+&=attn_1 e^{LSE_{1} - LSE_{12}}+attn_2 e^{LSE_{2} - LSE_{12}} 
 \end{aligned}
 $$
 
@@ -138,17 +138,6 @@ def _update_out_and_lse(
 ```
 
 事实上还可以进一步简化，即不需要计算出 `new_lse`,推导如下：
-
-$$
-\begin{aligned} 
-\text{attn}_{12} &= \text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \\
-&= \text{attn}_1 e^{-\log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{1} - \log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} \\
-&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{e^{\text{LSE}_{2} - \text{LSE}_{1}}}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} \\
-&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{1}{1 + e^{-\text{LSE}_{2} + \text{LSE}_{1}}} \\
-&= \text{attn}_1 \cdot \text{sigmoid}(\text{LSE}_{2} - \text{LSE}_{1}) + \text{attn}_2 \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2}) \\
-&= \text{attn}_1 - (\text{attn}_1 - \text{attn}_2) \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2})
-\end{aligned}
-$$
 
 $$
 \begin{aligned} 
