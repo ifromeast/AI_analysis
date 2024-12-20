@@ -66,20 +66,21 @@ $$\text{attention}(q_x,K,V)=\frac{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}v_y}{\sum_
 $$
 \begin{equation}
 \begin{aligned}
-A_i & =\exp \left(Q_i K^T\right) \cdot V \\
-& =\exp \left(\left[Q_i K_1^T, \ldots, Q_i K_{B_{K V}}^T\right]\right) \cdot V \\
-& \left.=\left[\exp \left(Q_i K_1^T\right), \ldots, \exp \left(Q_i K_{B_{K V}}^T\right)\right]\right) \cdot V \\
-& \left.\left.=\left[\exp \left(Q_i K_1^T\right), \ldots, \exp \left(Q_i K_{B_{K V}}^T\right)\right]\right) \cdot\left[\begin{array}{c}
+A_i &= \exp \left(Q_i K^T\right) \cdot V \\
+&=\exp \left(\left[Q_i K_1^T, \ldots, Q_i K_{B_{K V}}^T\right]\right) \cdot V \\
+&=\left(\left[\exp \left(Q_i K_1^T\right), \ldots, \exp \left(Q_i K_{B_{K V}}^T\right)\right]\right) \cdot V \\
+&=\left[\exp \left(Q_i K_1^T\right), \ldots, \exp \left(Q_i K_{B_{K V}}^T\right) \right] \cdot\left[\begin{array}{c}
 V_1 \\
 \ldots \\
 V_{B_{K V}}
-\end{array}\right]\right) \\
-& =\sum_{j=1}^{B_{K V}} \exp \left(Q_i K_j^T\right) \cdot V_j
+\end{array}\right] \\
+&=\sum_{j=1}^{B_{K V}} \exp \left(Q_i K_j^T\right) \cdot V_j
 \end{aligned}
 \end{equation}
 $$
 
 则有
+
 $$
 \begin{equation}
 \frac{A}{B}=\frac{\sum_{i=1}^n A_i}{\sum_{i=1}^n B_i}
@@ -87,8 +88,15 @@ $$
 $$
 
 下面通过记录 $attn_i=A_i/B_i$ 和 $B_i$ 来计算完整的 attention 结果。
+
 $$
-\begin{aligned} B_{12} &= B_1 + B_2 \\ \text{attn}_{12}&=\text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ B_{123}&=B_{12} + B_{3}\\ \text{attn}_{123}&=\text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ &\cdots\\ B_{1\dots n}&=B_{1\dots n-1} + B_{n}\\ \text{attn}=\text{attn}_{1\dots n}&=\text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} \end{aligned}
+\begin{aligned} 
+B_{12} &= B_1 + B_2 \\ 
+\text{attn}_{12} &= \text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}} \\ 
+B_{123} &= B_{12} + B_{3} \\ 
+\text{attn}_{123} &= \text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ &\cdots\\ B_{1\dots n}&=B_{1\dots n-1} + B_{n}\\ 
+\text{attn}=\text{attn}_{1\dots n} &= \text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} 
+\end{aligned}
 $$
 
 接下来用 LSE 来替换 B，即 $LSE_i=log(B_i)$，则
