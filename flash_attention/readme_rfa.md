@@ -94,7 +94,7 @@ $$
 B_{12} &= B_1 + B_2 \\ 
 \text{attn}_{12} &= \text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}} \\ 
 B_{123} &= B_{12} + B_{3} \\ 
-\text{attn}_{123} &= \text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ &\cdots\\ B_{1\dots n}&=B_{1\dots n-1} + B_{n}\\ 
+\text{attn}_{123} &= \text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
 \text{attn}=\text{attn}_{1\dots n} &= \text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} 
 \end{aligned}
 $$
@@ -110,10 +110,12 @@ $$
 \end{aligned}
 $$
 
-123
 
 $$
-\begin{aligned} \text{attn}_{12}&=\text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ &=\text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}}+\text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \end{aligned}
+\begin{aligned} 
+\text{attn}_{12} &= \text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ 
+&=\text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}}+\text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} 
+\end{aligned}
 $$
 
 
@@ -136,6 +138,7 @@ def _update_out_and_lse(
 ```
 
 事实上还可以进一步简化，即不需要计算出 `new_lse`,推导如下：
+
 $$
 \begin{aligned} 
 \text{attn}_{12}&=\text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}}+\text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \\
@@ -146,6 +149,7 @@ $$
 &= \text{attn}_1 - (\text{attn}_1 - \text{attn}_2) \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2})
 \end{aligned}
 $$
+
 代码实现如下：
 ```python
 def _update_out_and_lse(out: torch.Tensor, lse: torch.Tensor, block_out: torch.Tensor, block_lse: torch.Tensor,) -> Tuple[torch.Tensor, torch.Tensor]:
