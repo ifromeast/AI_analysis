@@ -152,12 +152,12 @@ $$
 
 $$
 \begin{aligned} 
-\text{attn}_{12} &= \text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \\
-&= \text{attn}_1 e^{-\log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{1} - \log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} \\
-&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{e^{\text{LSE}_{2} - \text{LSE}_{1}}}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} \\
-&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{1}{1 + e^{-\text{LSE}_{2} + \text{LSE}_{1}}} \\
-&= \text{attn}_1 \cdot \text{sigmoid}(\text{LSE}_{2} - \text{LSE}_{1}) + \text{attn}_2 \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2}) \\
-&= \text{attn}_1 - (\text{attn}_1 - \text{attn}_2) \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2})
+{attn}_{12} &= {attn}_1 e^{{LSE}_{1} - {LSE}_{12}} + {attn}_2 e^{{LSE}_{2} - {LSE}_{12}} \\
+&= {attn}_1 e^{-\log(1 + e^{{LSE}_{2} - {LSE}_{1}})} + {attn}_2 e^{{LSE}_{2} - {LSE}_{1} - \log(1 + e^{{LSE}_{2} - {LSE}_{1}})} \\
+&= {attn}_1 \cdot \frac{1}{1 + e^{{LSE}_{2} - {LSE}_{1}}} + {attn}_2 \cdot \frac{e^{{LSE}_{2} - {LSE}_{1}}}{1 + e^{{LSE}_{2} - {LSE}_{1}}} \\
+&= {attn}_1 \cdot \frac{1}{1 + e^{{LSE}_{2} - {LSE}_{1}}} + {attn}_2 \cdot \frac{1}{1 + e^{-{LSE}_{2} + {LSE}_{1}}} \\
+&= {attn}_1 \cdot {sigmoid}({LSE}_{2} - {LSE}_{1}) + {attn}_2 \cdot {sigmoid}({LSE}_{1} - {LSE}_{2}) \\
+&= {attn}_1 - ({attn}_1 - {attn}_2) \cdot {sigmoid}({LSE}_{1} - {LSE}_{2})
 \end{aligned}
 $$
 
