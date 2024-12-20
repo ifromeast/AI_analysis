@@ -91,11 +91,11 @@ $$
 
 $$
 \begin{aligned} 
-B_{12} &= B_1 + B_2 \\ 
-attn_{12} &= attn_1\frac{B_{1}}{B_{12}}+attn_2\frac{B_{2}}{B_{12}} \\ 
-B_{123} &= B_{12} + B_{3} \\ 
-attn_{123} &= attn_{12}\frac{B_{12}}{B_{123}}+attn_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
-attn=attn_{1\dots n} &= attn_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+attn_n\frac{B_{n}}{B_{1\dots n}} 
+B_{12} = B_1 + B_2 \\ 
+attn_{12} = attn_1\frac{B_{1}}{B_{12}}+attn_2\frac{B_{2}}{B_{12}} \\ 
+B_{123} = B_{12} + B_{3} \\ 
+attn_{123} = attn_{12}\frac{B_{12}}{B_{123}}+attn_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
+attn=attn_{1\dots n} = attn_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+attn_n\frac{B_{n}}{B_{1\dots n}} 
 \end{aligned}
 $$
 
@@ -137,12 +137,12 @@ def _update_out_and_lse(
     return out, lse
 ```
 
-事实上还可以进一步简化，即不需要计算出 `new_lse`,推导如下：
+事实上还可以进一步简化，即不需要计算出 `new_lse`, 而改用 `sigmoid` 实现推导如下：
 
 $$
 \begin{aligned} 
-attn_{12} &= attn_1 e^{LSE_{1} - LSE_{12}} + attn_2 e^{LSE_{2} - LSE_{12}} \\
-&= attn_1 e^{-\log(1 + e^{LSE_{2} - LSE_{1}})} + attn_2 e^{LSE_{2} - LSE_{1} - \log(1 + e^{LSE_{2} - LSE_{1}})} \\
+attn_{12} &= attn_1 \cdot e^{LSE_{1} - LSE_{12}} + attn_2 \cdot e^{LSE_{2} - LSE_{12}} \\
+&= attn_1 \cdot e^{-\log(1 + e^{LSE_{2} - LSE_{1}})} + attn_2 \cdot e^{LSE_{2} - LSE_{1} - \log(1 + e^{LSE_{2} - LSE_{1}})} \\
 &= attn_1 \cdot \frac{1}{1 + e^{LSE_{2} - LSE_{1}}} + attn_2 \cdot \frac{e^{LSE_{2} - LSE_{1}}}{1 + e^{LSE_{2} - LSE_{1}}} \\
 &= attn_1 \cdot \frac{1}{1 + e^{LSE_{2} - LSE_{1}}} + attn_2 \cdot \frac{1}{1 + e^{-LSE_{2} + LSE_{1}}} \\
 &= attn_1 \cdot {sigmoid}(LSE_{2} - LSE_{1}) + attn_2 \cdot {sigmoid}(LSE_{1} - LSE_{2}) \\
@@ -162,7 +162,13 @@ def _update_out_and_lse(out: torch.Tensor, lse: torch.Tensor, block_out: torch.T
 ```
 
 
-## 2. Ring Attention 原理及其实现
+## 2. Ring Attention 的实现及其细节
+
+在上一节中，我们比较细致研究了 Ring Attention 的分块计算的过程，即：
+- 将 Q,K, V 分块，其中 Q 在外循环，K, V 在内循环
+- 每一块在不同 device 上分别计算分别计算 attention 和 LSE
+- 将计算结果通过迭代的形式更新，得到最终的 attention 和 LSE
+
 
 
 
