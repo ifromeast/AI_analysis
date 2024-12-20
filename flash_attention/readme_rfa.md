@@ -94,7 +94,7 @@ $$
 B_{12} = B_1 + B_2 \\ 
 attn_{12} = attn_1\frac{B_{1}}{B_{12}}+attn_2\frac{B_{2}}{B_{12}} \\ 
 B_{123} = B_{12} + B_{3} \\ 
-attn_{123} = attn_{12}\frac{B_{12}}{B_{123}}+attn_3\frac{B_{3}}{B_{123}}\\ & \cdots \\ B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
+attn_{123} = attn_{12}\frac{B_{12}}{B_{123}}+attn_3\frac{B_{3}}{B_{123}} \cdots B_{1\dots n}&=B_{1\dots n-1} + B_{n} \\ 
 attn=attn_{1\dots n} = attn_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+attn_n\frac{B_{n}}{B_{1\dots n}} 
 \end{aligned}
 $$
@@ -169,7 +169,64 @@ def _update_out_and_lse(out: torch.Tensor, lse: torch.Tensor, block_out: torch.T
 - 每一块在不同 device 上分别计算分别计算 attention 和 LSE
 - 将计算结果通过迭代的形式更新，得到最终的 attention 和 LSE
 
+如下图展示了内循环的数据交互和计算过程：
 
+![Ring Attention 数据传递与计算过程](./images/KV-rotate.gif)
+
+前向过程的代码实现的逻辑如下：
+```python
+def ring_flash_attn_forward(
+    process_group,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    softmax_scale,
+    dropout_p=0,
+    causal=True,
+    window_size=(-1, -1),
+    alibi_slopes=None,
+    deterministic=False,
+):
+    comm = RingComm(process_group)
+
+    out = None
+    lse = None
+
+    next_k, next_v = None, None
+
+    for step in range(comm.world_size):
+        if step + 1 != comm.world_size:
+            next_k: torch.Tensor = comm.send_recv(k)
+            next_v: torch.Tensor = comm.send_recv(v)
+            comm.commit()
+
+        if not causal or step <= comm.rank:
+            params = get_default_args(_flash_attn_forward).copy()
+            params.update(
+                {
+                    "q": q,
+                    "k": k,
+                    "v": v,
+                    "dropout_p": dropout_p,
+                    "softmax_scale": softmax_scale,
+                    "causal": causal and step == 0,
+                    "window_size": window_size,
+                    "alibi_slopes": alibi_slopes,
+                    "return_softmax": True and dropout_p > 0,
+                }
+            )
+            block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(**params)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+
+        if step + 1 != comm.world_size:
+            comm.wait()
+            k = next_k
+            v = next_v
+
+    out = out.to(q.dtype)
+    lse = lse.squeeze(dim=-1).transpose(1, 2)
+    return out, lse
+```
 
 
 
