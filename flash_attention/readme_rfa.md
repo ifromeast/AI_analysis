@@ -86,7 +86,7 @@ $$
 
 下面通过记录 $attn_i=A_i/B_i$ 和 $B_i$ 来计算完整的 attention 结果。
 $$
-\begin{aligned} B_{12} &= B_1 + B_2\\ \text{attn}_{12}&=\text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ B_{123}&=B_{12} + B_{3}\\ \text{attn}_{123}&=\text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ &\cdots\\ B_{1\dots n}&=B_{1\dots n-1} + B_{n}\\ \text{attn}=\text{attn}_{1\dots n}&=\text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} \end{aligned}
+\begin{aligned} B_{12} &= B_1 + B_2 \\ \text{attn}_{12}&=\text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ B_{123}&=B_{12} + B_{3}\\ \text{attn}_{123}&=\text{attn}_{12}\frac{B_{12}}{B_{123}}+\text{attn}_3\frac{B_{3}}{B_{123}}\\ &\cdots\\ B_{1\dots n}&=B_{1\dots n-1} + B_{n}\\ \text{attn}=\text{attn}_{1\dots n}&=\text{attn}_{1\dots n-1}\frac{B_{1\dots n-1}}{B_{1\dots n}}+\text{attn}_n\frac{B_{n}}{B_{1\dots n}} \end{aligned}
 $$
 
 接下来用 LSE 来替换 B，即 $LSE_i=log(B_i)$，则
@@ -98,6 +98,8 @@ $$
 &= \text{LSE}_1 + \log(1 + e^{\text{LSE}_2 - \text{LSE}_1})
 \end{aligned}
 $$
+
+123
 
 $$
 \begin{aligned} \text{attn}_{12}&=\text{attn}_1\frac{B_{1}}{B_{12}}+\text{attn}_2\frac{B_{2}}{B_{12}}\\ &=\text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}}+\text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \end{aligned}
