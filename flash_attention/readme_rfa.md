@@ -152,7 +152,7 @@ $$
 
 $$
 \begin{aligned} 
-{attn}_{12} &= {attn}_1 e^{{LSE}_{1} - {LSE}_{12}} + {attn}_2 e^{{LSE}_{2} - {LSE}_{12}} \\
+attn_{12} &= {attn}_1 e^{{LSE}_{1} - {LSE}_{12}} + {attn}_2 e^{{LSE}_{2} - {LSE}_{12}} \\
 &= {attn}_1 e^{-\log(1 + e^{{LSE}_{2} - {LSE}_{1}})} + {attn}_2 e^{{LSE}_{2} - {LSE}_{1} - \log(1 + e^{{LSE}_{2} - {LSE}_{1}})} \\
 &= {attn}_1 \cdot \frac{1}{1 + e^{{LSE}_{2} - {LSE}_{1}}} + {attn}_2 \cdot \frac{e^{{LSE}_{2} - {LSE}_{1}}}{1 + e^{{LSE}_{2} - {LSE}_{1}}} \\
 &= {attn}_1 \cdot \frac{1}{1 + e^{{LSE}_{2} - {LSE}_{1}}} + {attn}_2 \cdot \frac{1}{1 + e^{-{LSE}_{2} + {LSE}_{1}}} \\
