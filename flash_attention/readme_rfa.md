@@ -35,6 +35,7 @@ $$X = [X_1, X_2, \ldots, X_n]$$
 
 然后我们要采用迭代的方法计算 $softmax(X)$, 
 对于第一块 $X_1$, 我们只有该部分的信息，因此只能计算该部分的 softmax, 即
+
 $$lse_1 = \log \left(\sum_{i=1}^{len(X_1)} e^{x_i}\right)$$
 
 $$softmax_1(x_i) = e^{x_i-lse_1}$$
@@ -60,7 +61,8 @@ $$\text{attention}(q_x,K,V)=\frac{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}v_y}{\sum_
 计算过程如下图所示：
 ![splitQ](./images/splitQ.png)
 
-接下来再对 K,V 进行拆分，我们用 $attn=A/B$ 表示 attention 结果的分子和分母, 对于分子部分，有l
+接下来再对 K,V 进行拆分，我们用 $attn=A/B$ 表示 attention 结果的分子和分母, 对于分子部分，有
+
 $$
 \begin{equation}
 \begin{aligned}
@@ -90,6 +92,7 @@ $$
 $$
 
 接下来用 LSE 来替换 B，即 $LSE_i=log(B_i)$，则
+
 $$
 \begin{aligned}
 \text{LSE}_{12} &= \log (B_1 + B_2) \\
