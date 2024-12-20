@@ -54,12 +54,13 @@ $$softmax^\prime = softmax * e^{lse-lse_{new}}$$
 如果我们将 Q 进行拆分，那么需要全部的 K,V 才能实现 softmax 的计算，即：
 
 $$\text{attention}(q_x,K,V)=\frac{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}v_y}{\sum_{y=1}^{\text{seqlen}}e^{w_{xy}}}$$
+
 其中 $w_{xy}=q_xk_y^T/\sqrt{d}$ 。
 
 计算过程如下图所示：
 ![splitQ](./images/splitQ.png)
 
-接下来再对 K,V 进行拆分，我们用 $attn=A/B$ 表示 attention 结果的分子和分母, 对于分子部分，有
+接下来再对 K,V 进行拆分，我们用 $attn=A/B$ 表示 attention 结果的分子和分母, 对于分子部分，有l
 $$
 \begin{equation}
 \begin{aligned}
@@ -90,7 +91,12 @@ $$
 
 接下来用 LSE 来替换 B，即 $LSE_i=log(B_i)$，则
 $$
-\begin{aligned} \text{LSE}_{12} &= \log (B_1 + B_2) \\&=\log(B_1\times(1 + \frac{B_2}{B_1}))\\ &=\log B_1 + \log(1+e^{\log B_2 - \log B_1})\\&=\text{LSE}_1+\log(1 + e^{\text{LSE}_2-\text{LSE}_1}) \end{aligned}
+\begin{aligned}
+\text{LSE}_{12} &= \log (B_1 + B_2) \\
+&= \log(B_1 \times (1 + \frac{B_2}{B_1})) \\
+&= \log B_1 + \log(1 + e^{\log B_2 - \log B_1}) \\
+&= \text{LSE}_1 + \log(1 + e^{\text{LSE}_2 - \text{LSE}_1})
+\end{aligned}
 $$
 
 $$
