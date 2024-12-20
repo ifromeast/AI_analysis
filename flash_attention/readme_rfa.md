@@ -150,6 +150,17 @@ $$
 \end{aligned}
 $$
 
+$$
+\begin{aligned} 
+\text{attn}_{12} &= \text{attn}_1 e^{\text{LSE}_{1} - \text{LSE}_{12}} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{12}} \\
+&= \text{attn}_1 e^{-\log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} + \text{attn}_2 e^{\text{LSE}_{2} - \text{LSE}_{1} - \log(1 + e^{\text{LSE}_{2} - \text{LSE}_{1}})} \\
+&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{e^{\text{LSE}_{2} - \text{LSE}_{1}}}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} \\
+&= \text{attn}_1 \cdot \frac{1}{1 + e^{\text{LSE}_{2} - \text{LSE}_{1}}} + \text{attn}_2 \cdot \frac{1}{1 + e^{-\text{LSE}_{2} + \text{LSE}_{1}}} \\
+&= \text{attn}_1 \cdot \text{sigmoid}(\text{LSE}_{2} - \text{LSE}_{1}) + \text{attn}_2 \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2}) \\
+&= \text{attn}_1 - (\text{attn}_1 - \text{attn}_2) \cdot \text{sigmoid}(\text{LSE}_{1} - \text{LSE}_{2})
+\end{aligned}
+$$
+
 代码实现如下：
 ```python
 def _update_out_and_lse(out: torch.Tensor, lse: torch.Tensor, block_out: torch.Tensor, block_lse: torch.Tensor,) -> Tuple[torch.Tensor, torch.Tensor]:
