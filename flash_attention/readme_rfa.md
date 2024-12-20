@@ -166,7 +166,7 @@ def _update_out_and_lse(out: torch.Tensor, lse: torch.Tensor, block_out: torch.T
 
 在上一节中，我们比较细致研究了 Ring Attention 的分块计算的过程，即：
 - 将 Q,K, V 分块，其中 Q 在外循环，K, V 在内循环
-- 每一块在不同 device 上分别计算分别计算 attention 和 LSE
+- 每一块在不同 device 上分别计算分别计算 attention 和 LSE (可以服用 Flash Attention 的 kernel) 
 - 将计算结果通过迭代的形式更新，得到最终的 attention 和 LSE
 
 如下图展示了内循环的数据交互和计算过程：
@@ -228,10 +228,68 @@ def ring_flash_attn_forward(
     return out, lse
 ```
 
-
-
 ### 精度验证
+通过运行以下代码可以验证 ring flash attention 的精度, benchmark 为已经验证过的 flash attention 的kernel
+```
+torchrun --nproc_per_node=8  ring_flash_attention/test_ring_flash_attn.py 
+```
+前向过程的误差如下：
+```
+##############################
+# forward:
+##############################
+out diff:
+Rank[0] max 0.00391, mean 7.68e-05
+Rank[1] max 0.00195, mean 0.000114
+Rank[2] max 0.000977, mean 9.16e-05
+Rank[3] max 0.000977, mean 7.96e-05
+Rank[4] max 0.000977, mean 7.1e-05
+Rank[5] max 0.000977, mean 6.48e-05
+Rank[6] max 0.000977, mean 6.01e-05
+Rank[7] max 0.000488, mean 5.63e-05
+lse diff:
+Rank[0] max 9.54e-07, mean 1.2e-07
+Rank[1] max 9.54e-07, mean 2.01e-07
+Rank[2] max 9.54e-07, mean 2.27e-07
+Rank[3] max 9.54e-07, mean 2.37e-07
+Rank[4] max 1.91e-06, mean 2.52e-07
+Rank[5] max 1.91e-06, mean 3.13e-07
+Rank[6] max 1.91e-06, mean 3.38e-07
+Rank[7] max 1.91e-06, mean 3.89e-07
+```
 
+反向过程的误差如下：
+```
+##############################
+# backward:
+##############################
+Rank[0] max 0.0312, mean 0.000736
+Rank[1] max 0.00195, mean 9.49e-05
+Rank[2] max 0.000488, mean 6.39e-05
+Rank[3] max 0.000977, mean 5.46e-05
+Rank[4] max 0.000488, mean 4.32e-05
+Rank[5] max 0.000488, mean 3.17e-05
+Rank[6] max 0.000488, mean 2.94e-05
+Rank[7] max 0.000488, mean 1.39e-05
+dk diff:
+Rank[0] max 0.0156, mean 0.000561
+Rank[1] max 0.000977, mean 8.44e-05
+Rank[2] max 0.000977, mean 6.15e-05
+Rank[3] max 0.000488, mean 5.15e-05
+Rank[4] max 0.000488, mean 3.79e-05
+Rank[5] max 0.000488, mean 3.58e-05
+Rank[6] max 0.000488, mean 2.96e-05
+Rank[7] max 0.000488, mean 1.49e-05
+dv diff:
+Rank[0] max 0.0156, mean 0.000568
+Rank[1] max 0.00195, mean 9.63e-05
+Rank[2] max 0.000977, mean 5.6e-05
+Rank[3] max 0.000977, mean 4.77e-05
+Rank[4] max 0.000977, mean 4.48e-05
+Rank[5] max 0.000488, mean 3.24e-05
+Rank[6] max 0.000488, mean 2.87e-05
+Rank[7] max 0.000488, mean 1.53e-05
+```
 
 
 
