@@ -22,7 +22,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
     causal = True
     deterministic = False
 
-    assert seqlen % (2 * world_size) == 0, f"seqlen {seqlen} world_size {world_size}"
+    assert seqlen % (2 * world_size) == 0, f"seqlen {seqlen} world_size {world_size} not divisible"
     assert d % 8 == 0
 
     qkv = torch.randn(batch_size, seqlen, 3, nheads, d, device=device, dtype=dtype, requires_grad=True)
