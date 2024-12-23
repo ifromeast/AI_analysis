@@ -119,7 +119,6 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
                 )
         print(f"speed: {speed_f:.3f} TFLOPs/s")
 
-
 if __name__ == "__main__":
     dist.init_process_group("nccl")
     rank = dist.get_rank()
