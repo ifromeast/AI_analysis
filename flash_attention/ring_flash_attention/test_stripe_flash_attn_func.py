@@ -1,16 +1,8 @@
 import torch
 import torch.distributed as dist
 from flash_attn import flash_attn_qkvpacked_func
-from ring_flash_attention.stripe_flash_attn import stripe_flash_attn_qkvpacked_func
+from ring_flash_attention.stripe_flash_attn import stripe_flash_attn_qkvpacked_func, extract_local
 from utils import log, set_seed
-
-
-def extract_local(value, rank, world_size, dim=1):
-    value = torch.stack(value.split(world_size, dim=dim), dim=dim).transpose(
-        dim, dim + 1
-    )
-    slicer = [rank if i == dim else slice(None) for i in range(len(value.shape))]
-    return value[slicer].contiguous()
 
 
 if __name__ == "__main__":
@@ -33,9 +25,7 @@ if __name__ == "__main__":
     assert seqlen % (2 * world_size) == 0
     assert d % 8 == 0
 
-    qkv = torch.randn(
-        batch_size, seqlen, 3, nheads, d, device=device, dtype=dtype, requires_grad=True
-    )
+    qkv = torch.randn(batch_size, seqlen, 3, nheads, d, device=device, dtype=dtype, requires_grad=True)
     dist.broadcast(qkv, src=0)
 
     dout = torch.randn(batch_size, seqlen, nheads, d, device=device, dtype=dtype)

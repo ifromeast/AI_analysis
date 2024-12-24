@@ -4,6 +4,12 @@ from flash_attn.flash_attn_interface import _flash_attn_forward, _flash_attn_bac
 from ring_flash_attention.rfa_utils import RingComm, update_out_and_lse, get_default_args
 
 
+def extract_local(value, rank, world_size, dim=1):
+    value = torch.stack(value.split(world_size, dim=dim), dim=dim).transpose(dim, dim + 1)
+    slicer = [rank if i == dim else slice(None) for i in range(len(value.shape))]
+    return value[slicer].contiguous()
+
+
 def stripe_flash_attn_forward(
     process_group,
     q: torch.Tensor,
