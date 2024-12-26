@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.distributed as dist
-from ring_flash_attention.stripe_flash_attn import stripe_flash_attn_qkvpacked_func, extract_local
+from ring_flash_attention.zigzag_ring_flash_attn import zigzag_ring_flash_attn_qkvpacked_func, extract_local
 import argparse
 from utils import flops, efficiency
 
@@ -87,7 +87,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
 
     else:
         for _ in range(num_iter):
-            qkv.grad = None
+            local_qkv.grad = None
             out = f(
                 local_qkv,
                 dropout_p=dropout_p,
@@ -134,8 +134,8 @@ if __name__ == "__main__":
 
     torch.cuda.empty_cache()
     if rank == 0:
-        print(f"{stripe_flash_attn_qkvpacked_func.__name__} BS:{args.batch_size} seq_len:{args.seq_len} nheads:{args.nheads} head_size:{args.head_size}, fwd_only: {args.fwd_only}")
-    benchmark(stripe_flash_attn_qkvpacked_func, num_iter=500, forward_only=args.fwd_only, log=True, profile=args.profile)
+        print(f"{zigzag_ring_flash_attn_qkvpacked_func.__name__} BS:{args.batch_size} seq_len:{args.seq_len} nheads:{args.nheads} head_size:{args.head_size}, fwd_only: {args.fwd_only}")
+    benchmark(zigzag_ring_flash_attn_qkvpacked_func, num_iter=500, forward_only=args.fwd_only, log=True, profile=args.profile)
 
 
 

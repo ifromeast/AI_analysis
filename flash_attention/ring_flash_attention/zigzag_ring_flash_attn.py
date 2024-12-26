@@ -5,12 +5,11 @@ from ring_flash_attention.rfa_utils import RingComm, update_out_and_lse, get_def
 
 
 def extract_local(value, rank, world_size, dim=1):
-    value = torch.stack(value.split(world_size, dim=dim), dim=dim).transpose(dim, dim + 1)
-    slicer = [rank if i == dim else slice(None) for i in range(len(value.shape))]
-    return value[slicer].contiguous()
+    value_chunks = value.chunk(2 * world_size, dim=dim)
+    local_value = torch.cat([value_chunks[rank], value_chunks[2 * world_size - rank - 1]], dim=dim)
+    return local_value.contiguous()
 
-
-def stripe_flash_attn_forward(
+def zigzag_ring_flash_attn_forward(
     process_group,
     q: torch.Tensor,
     k: torch.Tensor,
@@ -22,13 +21,33 @@ def stripe_flash_attn_forward(
     alibi_slopes=None,
     deterministic=False,
 ):
-    assert (causal), "stripe flash attn only supports causal attention, if not causal, use ring flash attn instead"
+    assert causal == True, "zigzag ring is meaningless for causal=False"
     comm = RingComm(process_group)
+
+    block_seq_len = q.shape[1] // 2
+    q1 = q[:, block_seq_len:]
 
     out = None
     lse = None
-
     next_k, next_v = None, None
+
+    def forward(q, k, v, causal):
+        params = get_default_args(_flash_attn_forward).copy()
+        params.update(
+            {
+                "q": q,
+                "k": k,
+                "v": v,
+                "dropout_p": dropout_p,
+                "softmax_scale": softmax_scale,
+                "causal": causal,
+                "window_size": window_size,
+                "alibi_slopes": alibi_slopes,
+                "return_softmax": True and dropout_p > 0,
+            }
+        )
+        block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(**params)
+        return block_out, block_lse
 
     for step in range(comm.world_size):
         if step + 1 != comm.world_size:
@@ -36,39 +55,23 @@ def stripe_flash_attn_forward(
             next_v: torch.Tensor = comm.send_recv(v)
             comm.commit()
 
-        params = get_default_args(_flash_attn_forward).copy()
-        if step <= comm.rank:
-            params.update(
-                {
-                    "q": q,
-                    "k": k,
-                    "v": v,
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": causal,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "return_softmax": True and dropout_p > 0,
-                }
-            )
-            block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(**params)
+        if step == 0:
+            block_out, block_lse = forward(q, k, v, causal=True)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+        elif step <= comm.rank:
+            k0 = k[:, :block_seq_len]
+            v0 = v[:, :block_seq_len]
+            block_out, block_lse = forward(q, k0, v0, causal=False)
             out, lse = update_out_and_lse(out, lse, block_out, block_lse)
         else:
-            params.update(
-                {
-                    "q": q[:, 1:],
-                    "k": k[:, :-1],
-                    "v": v[:, :-1],
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": causal,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "return_softmax": True and dropout_p > 0,
-                }
+            block_out, block_lse = forward(q1, k, v, causal=False)
+            out, lse = update_out_and_lse(
+                out,
+                lse,
+                block_out,
+                block_lse,
+                slice_=(slice(None), slice(block_seq_len, None)),
             )
-            block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(**params)
-            out, lse = update_out_and_lse(out, lse, block_out, block_lse, slice_=(slice(None), slice(1, None)))
 
         if step + 1 != comm.world_size:
             comm.wait()
@@ -80,7 +83,7 @@ def stripe_flash_attn_forward(
     return out, lse
 
 
-def stripe_flash_attn_backward(
+def zigzag_ring_flash_attn_backward(
     process_group,
     dout,
     q,
@@ -95,9 +98,7 @@ def stripe_flash_attn_backward(
     alibi_slopes=None,
     deterministic=False,
 ):
-    assert (
-        causal
-    ), "stripe flash attn only supports causal attention, if not causal, ring flash attn instead"
+    assert causal == True, "zigzag ring is meaningless for causal=False"
     kv_comm = RingComm(process_group)
     d_kv_comm = RingComm(process_group)
     dq, dk, dv = None, None, None
@@ -105,84 +106,74 @@ def stripe_flash_attn_backward(
     next_k, next_v = None, None
     dk_comm_buffer, dv_comm_buffer = None, None
 
-    block_dq_buffer = torch.empty(q.shape, dtype=q.dtype, device=q.device)
-    block_dk_buffer = torch.empty(k.shape, dtype=k.dtype, device=k.device)
-    block_dv_buffer = torch.empty(v.shape, dtype=v.dtype, device=v.device)
+    dout1 = dout.chunk(2, dim=1)[1]
+    q1 = q.chunk(2, dim=1)[1]
+    out1 = out.chunk(2, dim=1)[1]
+    softmax_lse1 = softmax_lse.chunk(2, dim=2)[1].contiguous()
+    block_seq_len = q.shape[1] // 2
+
+    # repeatly allocating buffer may be slow...
+    dq_buffer = torch.empty(q.shape, dtype=q.dtype, device=q.device)
+    dk_buffer = torch.empty(k.shape, dtype=k.dtype, device=k.device)
+    dv_buffer = torch.empty(v.shape, dtype=v.dtype, device=v.device)
+
+    def backward(dout, q, k, v, out, softmax_lse, causal):
+        seqlen_q = q.shape[1]
+        seqlen_kv = k.shape[1]
+        params = get_default_args(_flash_attn_backward).copy()
+        params.update(
+            {
+                "dout": dout,
+                "q": q,
+                "k": k,
+                "v": v,
+                "out": out,
+                "softmax_lse": softmax_lse,
+                "dq": dq_buffer[:, :seqlen_q],
+                "dk": dk_buffer[:, :seqlen_kv],
+                "dv": dv_buffer[:, :seqlen_kv],
+                "dropout_p": dropout_p,
+                "softmax_scale": softmax_scale,
+                "causal": causal,
+                "window_size": window_size,
+                "alibi_slopes": alibi_slopes,
+                "deterministic": deterministic,
+            }
+        )
+        _flash_attn_backward(**params)
+
     for step in range(kv_comm.world_size):
         if step + 1 != kv_comm.world_size:
             next_k = kv_comm.send_recv(k)
             next_v = kv_comm.send_recv(v)
             kv_comm.commit()
 
-        shift_causal = step > kv_comm.rank
-        softmax_lse_1 = None
-        params = get_default_args(_flash_attn_backward).copy()
-        if not shift_causal:
-            params.update(
-                {
-                    "dout": dout,
-                    "q": q,
-                    "k": k,
-                    "v": v,
-                    "out": out,
-                    "softmax_lse": softmax_lse,
-                    "dq": block_dq_buffer,
-                    "dk": block_dk_buffer,
-                    "dv": block_dv_buffer,
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": causal,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "deterministic": deterministic,
-                }
-            )
-            _flash_attn_backward(**params)
+        if step == 0:
+            backward(dout, q, k, v, out, softmax_lse, causal=True)
+            dq = dq_buffer.to(torch.float32)
+            dk = dk_buffer.to(torch.float32)
+            dv = dv_buffer.to(torch.float32)
         else:
-            if softmax_lse_1 is None:
-                # lazy init, since the last rank does not need softmax_lse_1
-                softmax_lse_1 = softmax_lse[:, :, 1:].contiguous()
-            params.update(
-                {
-                    "dout": dout[:, 1:],
-                    "q": q[:, 1:],
-                    "k": k[:, :-1],
-                    "v": v[:, :-1],
-                    "out": out[:, 1:],
-                    "softmax_lse": softmax_lse_1,
-                    "dq": block_dq_buffer[:, 1:],
-                    "dk": block_dk_buffer[:, :-1],
-                    "dv": block_dv_buffer[:, :-1],
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": causal,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "deterministic": deterministic,
-                }
-            )
-            _flash_attn_backward(**params)
-
-        if dq is None:
-            dq = block_dq_buffer.to(torch.float32)
-            dk = block_dk_buffer.to(torch.float32)
-            dv = block_dv_buffer.to(torch.float32)
-        else:
-            if not shift_causal:
-                dq += block_dq_buffer
+            if step <= kv_comm.rank:
+                k0 = k[:, :block_seq_len]
+                v0 = v[:, :block_seq_len]
+                backward(dout, q, k0, v0, out, softmax_lse, causal=False)
+                dq += dq_buffer
             else:
-                dq[:, 1:] += block_dq_buffer[:, 1:]
+                backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
+                # always use the first half in dq_buffer.
+                dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]
+
             d_kv_comm.wait()
             dk_comm_buffer, dv_comm_buffer = dk, dv
-            dk = next_dk
-            dv = next_dv
+            dk, dv = next_dk, next_dv
 
-            if not shift_causal:
-                dk = block_dk_buffer + dk
-                dv = block_dv_buffer + dv
+            if step <= kv_comm.rank:
+                dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]
+                dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]
             else:
-                dk[:, :-1] += block_dk_buffer[:, :-1]
-                dv[:, :-1] += block_dv_buffer[:, :-1]
+                dk += dk_buffer
+                dv += dv_buffer
 
         if step + 1 != kv_comm.world_size:
             kv_comm.wait()
@@ -198,7 +189,7 @@ def stripe_flash_attn_backward(
     return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
 
 
-class StripeFlashAttnFunc(torch.autograd.Function):
+class ZigZagRingFlashAttnFunc(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
@@ -220,7 +211,7 @@ class StripeFlashAttnFunc(torch.autograd.Function):
         assert alibi_slopes is None
         k = k.contiguous()
         v = v.contiguous()
-        out, softmax_lse = stripe_flash_attn_forward(
+        out, softmax_lse = zigzag_ring_flash_attn_forward(
             group,
             q,
             k,
@@ -246,7 +237,7 @@ class StripeFlashAttnFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse = ctx.saved_tensors
-        dq, dk, dv = stripe_flash_attn_backward(
+        dq, dk, dv = zigzag_ring_flash_attn_backward(
             ctx.group,
             dout,
             q,
@@ -264,18 +255,18 @@ class StripeFlashAttnFunc(torch.autograd.Function):
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 
-def stripe_flash_attn_qkvpacked_func(
+def zigzag_ring_flash_attn_qkvpacked_func(
     qkv,
     dropout_p=0.0,
     softmax_scale=None,
     causal=False,
-    window_size=(-1, -1),  # -1 means infinite context window
+    window_size=(-1, -1),
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
     group=None,
 ):
-    return StripeFlashAttnFunc.apply(
+    return ZigZagRingFlashAttnFunc.apply(
         qkv[:, :, 0],
         qkv[:, :, 1],
         qkv[:, :, 2],
@@ -290,19 +281,19 @@ def stripe_flash_attn_qkvpacked_func(
     )
 
 
-def stripe_flash_attn_kvpacked_func(
+def zigzag_ring_flash_attn_kvpacked_func(
     q,
     kv,
     dropout_p=0.0,
     softmax_scale=None,
     causal=False,
-    window_size=(-1, -1),  # -1 means infinite context window
+    window_size=(-1, -1),
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
     group=None,
 ):
-    return StripeFlashAttnFunc.apply(
+    return ZigZagRingFlashAttnFunc.apply(
         q,
         kv[:, :, 0],
         kv[:, :, 1],
@@ -317,20 +308,20 @@ def stripe_flash_attn_kvpacked_func(
     )
 
 
-def stripe_flash_attn_func(
+def zigzag_ring_flash_attn_func(
     q,
     k,
     v,
     dropout_p=0.0,
     softmax_scale=None,
     causal=False,
-    window_size=(-1, -1),  # -1 means infinite context window
+    window_size=(-1, -1),
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
     group=None,
 ):
-    return StripeFlashAttnFunc.apply(
+    return ZigZagRingFlashAttnFunc.apply(
         q,
         k,
         v,

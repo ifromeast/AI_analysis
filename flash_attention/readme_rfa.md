@@ -21,10 +21,13 @@ $$softmax(x_i) = \frac{e^{x_i - M}}{\sum_{i=1}^{n} e^{x_i - M}}$$
 $$lse\left(x_1, x_2, \ldots, x_n\right)=\log \left(\sum_{i=1}^n e^{x_i}\right)=M+\log \left(\sum_{i=1}^n e^{x_i-M}\right)$$
 
 这样就有：
+
 $$softmax(x_i) = e^{x_i-lse} $$
+
 通过这种方式，同时解决了上溢出和下溢出的问题。
 
 logsumexp函数还有一个有趣的性质，对其求导也可以的softmax函数
+
 $$
 \frac{\partial}{\partial x_i}\left(\log \left(\sum_{i=1}^n e^{ x_i}\right)\right)=\frac{e^{x_i}}{\sum_{i=1}^n e^{ x_i}}
 $$
@@ -367,8 +370,6 @@ Rank[7] max 0.000488, mean 1.53e-05
 Striped Attention ，它是 Ring Attention 的一种变体，它通过调整输入序列，几乎完全消除原始 Ring Attention 算法中存在的工作负载不平衡问题。
 具体而言，以 4 张卡为例，其划分的区别如下图所示：
 
-![alt text](./images/strided_attention.png)
-
 ![alt text](./images/striped_attn_sequence.png)
 
 那么具体要怎么实现这种划分呢，以下是一种方式：
@@ -422,6 +423,14 @@ tensor([[[ 3,  4,  5],
         [[51, 52, 53],
          [75, 76, 77]]])
 ```
+这样的划分就带来了计算上的区别，下图比较了朴素的 ring attention 和 stripe attention 在两个计算迭代上的区别
+
+![alt text](./images/workload_distribution.png)
+
+需要注意的是，在 KV 滑动过程中局部的 Attention mask 发生了变化，尽管仍然是下三角矩阵，但是对角线值也被 mask 掉了，下图展示了 mask 随着迭代过程变化的情况。在 flash_attn 中由于没有传入 mask 的接口，因此可以通过将 QKV 进行移位操作实现同样的效果，即 `q=q[:, 1:], k=k[:, :-1], v=v[:, :-1]` 
+
+![alt text](./images/stripe_attn_iteration.png)
+
 
 接下来我们看一下这种情况下的 profile, 仍然是选择 GPU 0,3,7，总的序列长度为 4096*8，可见负载处于完全均衡的状态：
 
@@ -432,18 +441,87 @@ tensor([[[ 3,  4,  5],
 
 | batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
 | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
-| 2 | 4096 | 16 | 128 | True | 42.146 | 23.727 | 236 | 5.8 |
-| 2 | 8192 | 16 | 128 | True | 37.802 | 26.454 | 472 | 20.8 |
-| 2 | 16384 | 16 | 128 | True | 28.473 | 35.122 | 944 | 62.6 |
-| 2 | 32768 | 16 | 128 | True | 19.080 | 52.410 | 1888 | 167.8 |
-| 2 | 65536 | 16 | 128 | True | 6.620 | 151.068 | 3776 | 232.9 |
+| 2 | 4096 | 16 | 128 | True | 113.991 | 8.773 | 236 | 15.7 |
+| 2 | 8192 | 16 | 128 | True | 80.538 | 12.416 | 472 | 44.3 |
+| 2 | 16384 | 16 | 128 | True | 46.703 | 21.412 | 944 | 102.7 |
+| 2 | 32768 | 16 | 128 | True | 25.092 | 39.853 | 1888 | 220.7 |
+| 2 | 65536 | 16 | 128 | True | 11.288 | 88.587 | 3776 | 397.2 |
 | 2 | 128000 | 16 | 128 | True | 4.184 | 238.987 | 7376 | 561.6 |
-| 2 | 4096 | 16 | 128 | False | 26.344 | 37.960 | 244 | 12.6 |
-| 2 | 8192 | 16 | 128 | False | 18.542 | 53.931 | 488 | 35.7 |
-| 2 | 16384 | 16 | 128 | False | 11.093 | 90.144 | 976.7 | 85.4 |
-| 2 | 32768 | 16 | 128 | False | 6.077 | 164.568 | 1953.5 | 187.1 |
-| 2 | 65536 | 16 | 128 | False | 1.788 | 559.343 |  3907 | 220.2 |
-| 2 | 128000 | 16 | 128 | False | 1.010 | 990.272 | 7636.8 | 474.4 |
+| 2 | 4096 | 16 | 128 | False | 41.932 | 23.848 | 244 | 20.2 |
+| 2 | 8192 | 16 | 128 | False | 24.535 | 40.758 | 488 | 47.2 |
+| 2 | 16384 | 16 | 128 | False | 12.787 | 78.203 | 976.7 | 98.4 |
+| 2 | 32768 | 16 | 128 | False | 6.438 | 155.339 | 1953.5 | 198.187 |
+| 2 | 65536 | 16 | 128 | False | 1.976 | 505.985 |  3907 | 243.4 |
+| 2 | 128000 | 16 | 128 | False | 0.976 | 1024.955 | 7636.8 | 458.3 |
+
+从数据可见，在长文本情况下，算力利用率提高了 50% 左右。
+
+## 3. 进一步优化 —— zigzag
+回顾一下以上两种版本，假设有一段长文本可以被分为 8 份, 假设在 4 个 GPU 上进行 ring attention 计算
+```
+L = [l0, l1, l2, l3, l4, l5, l6, l7]
+```
+那么对于朴素版，其划分是这样的：
+```
+   GPU0    GPU1    GPU2    GPU3
+| l0,l1 | l2,l3 | l4,l5 | l6,l7 |
+```
+对于 stripe 版，其划分是这样的：
+```
+   GPU0    GPU1    GPU2    GPU3
+| l0,l4 | l1,l5 | l2,l6 | l3,l7 |
+```
+
+现在我们期望其划分更加均匀，即以下这样的，即 zigzag 版：
+```
+   GPU0   GPU1    GPU2    GPU3
+| l0,l7 | l1,l6 | l2,l5 | l3,l4 |
+```
+
+首先即调整划分的方式为：
+```python
+def extract_local(value, rank, world_size, dim=1):
+    value_chunks = value.chunk(2 * world_size, dim=dim)
+    local_value = torch.cat([value_chunks[rank], value_chunks[2 * world_size - rank - 1]], dim=dim)
+    return local_value.contiguous()
+```
+![alt text](./images/zigzag_workflow.png)
+
+这样的划分带来了 mask 计算的区别, 事实上通过上图就已经可以看出计算的变化过程，但是为了清晰，我们不妨来绘制一下迭代过程的图像
+
+![alt text](./images/zigzag_iteration.png)
+
+以上过程通过3个分支判断即可实现，具体如下：
+```python
+        if step == 0:
+            block_out, block_lse = forward(q, k, v, causal=True)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+        elif step <= comm.rank:
+            k0 = k[:, :block_seq_len]
+            v0 = v[:, :block_seq_len]
+            block_out, block_lse = forward(q, k0, v0, causal=False)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+        else:
+            block_out, block_lse = forward(q1, k, v, causal=False)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse, slice_=(slice(None), slice(block_seq_len, None)),)
+```
+
+这样就完成了 zigzag ring attention 的实现，下面我们来测试一下其性能(8*4090)
+
+| batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| 2 | 4096 | 16 | 128 | True | 113.197 | 8.834 | 228 | 15.6 |
+| 2 | 8192 | 16 | 128 | True | 79.628 | 12.558 | 456 | 43.8 |
+| 2 | 16384 | 16 | 128 | True | 47.788 | 20.926 | 912 | 105.1 |
+| 2 | 32768 | 16 | 128 | True | 26.012 | 38.443 | 1825 | 228.8 |
+| 2 | 65536 | 16 | 128 | True | 11.627 | 86.005 | 3650 | 409.1 |
+| 2 | 128000 | 16 | 128 | True | 3.811 | 262.422 | 7139.9 |  511.4 |
+| 2 | 4096 | 16 | 128 | False | 41.929 | 23.850 | 228.1 | 20.2 |
+| 2 | 8192 | 16 | 128 | False | 24.683 | 40.513 | 456.2 | 47.5 |
+| 2 | 16384 | 16 | 128 | False | 12.857 | 77.777 | 912.5 | 98.9 |
+| 2 | 32768 | 16 | 128 | False | 6.532 | 153.098 | 1825 | 201.1 |
+| 2 | 65536 | 16 | 128 | False | 3.148 | 317.664 | 3650 | 387.6 |
+| 2 | 128000 | 16 | 128 | False | 1.126 | 887.891 | 7140.9 | 529.1 |
 
 
 # 参考资料
@@ -451,4 +529,4 @@ tensor([[[ 3,  4,  5],
 
 [2] https://zhuanlan.zhihu.com/p/683714620
 
-
+[3] https://arxiv.org/pdf/2406.18485
