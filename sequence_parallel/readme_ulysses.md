@@ -99,7 +99,9 @@ output = output.transpose(0, 2).contiguous().reshape(bs, shard_seqlen, hc, hs)
 | 2 | 128000 | 16 | 128 | False | 1.685 | 593.629 | 5891.9 | 791.3 |
 
 
-
+DeepSpeed Ulysses 的特点：
+- all2all 通信方式效率高
+- 并行度不能超过注意力头的数量
 
 
 # 参考资料
