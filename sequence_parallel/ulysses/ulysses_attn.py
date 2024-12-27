@@ -1,14 +1,10 @@
-# Copyright (c) Microsoft Corporation and Jiarui Fang
-# SPDX-License-Identifier: Apache-2.0
-# DeepSpeed Team & Jiarui Fang
-
 
 import torch
 
 from typing import Any
 from torch import Tensor
-from yunchang.kernels import FlashAttentionImpl, select_flash_attn_impl
 import torch.distributed as dist
+from flash_attn import flash_attn_func
 from ulysses.ulyssess_utils import SeqAllToAll4D
 
 
@@ -30,21 +26,12 @@ class UlyssesAttention(torch.nn.Module):
         scatter_idx: int = 2,
         gather_idx: int = 1,
         use_sync: bool = False,
-        attn_type : FlashAttentionImpl = FlashAttentionImpl.FA,
     ) -> None:
-
         super(UlyssesAttention, self).__init__()
         self.spg = sequence_process_group
         self.scatter_idx = scatter_idx
         self.gather_idx = gather_idx
         self.use_sync = use_sync
-        self.attn_type = attn_type
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        gpu_name = torch.cuda.get_device_name(device)
-        if "Turing" in gpu_name or "Tesla" in gpu_name or "T4" in gpu_name:
-            self.attn_type = FlashAttentionImpl.TORCH
-        self.attn_fn = select_flash_attn_impl(self.attn_type, stage="fwd-bwd")
 
     def forward(
         self,
@@ -85,28 +72,26 @@ class UlyssesAttention(torch.nn.Module):
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** -0.5
 
-        context_layer = self.attn_fn(
-            q,
-            k,
-            v,
-            dropout_p=dropout_p,
-            softmax_scale = softmax_scale,
-            causal=causal,
-            window_size=window_size,
-            softcap=softcap,
-            alibi_slopes=alibi_slopes,
-            deterministic=deterministic,
-            return_attn_probs=return_attn_probs,
-        )
+        context_layer = flash_attn_func(
+                                        q,
+                                        k,
+                                        v,
+                                        dropout_p=dropout_p,
+                                        softmax_scale = softmax_scale,
+                                        causal=causal,
+                                        window_size=window_size,
+                                        softcap=softcap,
+                                        alibi_slopes=alibi_slopes,
+                                        deterministic=deterministic,
+                                        return_attn_probs=return_attn_probs,
+                                    )
 
         if isinstance(context_layer, tuple):
             context_layer = context_layer[0]
 
         # (bs, seq_len, head_cnt/N, head_size) -> (bs, seq_len/N, head_cnt, head_size)
         # scatter 1, gather 2
-        output = SeqAllToAll4D.apply(
-            self.spg, context_layer, self.gather_idx, self.scatter_idx, self.use_sync
-        )
+        output = SeqAllToAll4D.apply(self.spg, context_layer, self.gather_idx, self.scatter_idx, self.use_sync)
 
         # out e.g., [s/p::h]
         return output
