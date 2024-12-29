@@ -22,18 +22,11 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
     causal = True
     deterministic = False
 
-    assert seqlen % (2 * world_size) == 0, f"seqlen {seqlen} world_size {world_size} not divisible"
+    assert seqlen % (2 * world_size) == 0, f"seqlen {seqlen} world_size {world_size}"
     assert d % 8 == 0
 
     qkv = torch.randn(batch_size, seqlen, 3, nheads, d, device=device, dtype=dtype, requires_grad=True)
-    dist.broadcast(qkv, src=0)
     dout = torch.randn(batch_size, seqlen, nheads, d, device=device, dtype=dtype)
-    dist.broadcast(dout, src=0)
-
-    local_qkv = qkv.chunk(world_size, dim=1)[rank].detach().clone()
-    local_qkv.requires_grad = True
-    local_dout = dout.chunk(world_size, dim=1)[rank].detach().clone()
-
 
     if profile:
         torch.backends.cudnn.benchmark = True
@@ -58,7 +51,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
 
     # warmup
     out = f(
-        local_qkv,
+        qkv,
         dropout_p=dropout_p,
         causal=causal,
         window_size=(-1, -1),
@@ -66,7 +59,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
         deterministic=deterministic,
         return_attn_probs=False,
     )
-    out.backward(local_dout)
+    out.backward(dout)
 
     begin = torch.cuda.Event(enable_timing=True)
     begin.record()
@@ -75,7 +68,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
         with torch.no_grad():
             for _ in range(num_iter):
                 _ = f(
-                    local_qkv,
+                    qkv,
                     dropout_p=dropout_p,
                     causal=causal,
                     window_size=(-1, -1),
@@ -90,7 +83,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
         for _ in range(num_iter):
             qkv.grad = None
             out = f(
-                local_qkv,
+                qkv,
                 dropout_p=dropout_p,
                 causal=causal,
                 window_size=(-1, -1),
@@ -98,7 +91,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
                 deterministic=deterministic,
                 return_attn_probs=False,
             )
-            out.backward(local_dout)
+            out.backward(dout)
             if profile:
                 profiler.step()
     end = torch.cuda.Event(enable_timing=True)
@@ -118,6 +111,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
                     time/num_iter
                 )
         print(f"speed: {speed_f:.3f} TFLOPs/s")
+
 
 if __name__ == "__main__":
     dist.init_process_group("nccl")

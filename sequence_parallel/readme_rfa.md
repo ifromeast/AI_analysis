@@ -21,10 +21,13 @@ $$softmax(x_i) = \frac{e^{x_i - M}}{\sum_{i=1}^{n} e^{x_i - M}}$$
 $$lse\left(x_1, x_2, \ldots, x_n\right)=\log \left(\sum_{i=1}^n e^{x_i}\right)=M+\log \left(\sum_{i=1}^n e^{x_i-M}\right)$$
 
 这样就有：
+
 $$softmax(x_i) = e^{x_i-lse} $$
+
 通过这种方式，同时解决了上溢出和下溢出的问题。
 
 logsumexp函数还有一个有趣的性质，对其求导也可以的softmax函数
+
 $$
 \frac{\partial}{\partial x_i}\left(\log \left(\sum_{i=1}^n e^{ x_i}\right)\right)=\frac{e^{x_i}}{\sum_{i=1}^n e^{ x_i}}
 $$
@@ -296,6 +299,7 @@ Rank[7] max 0.000488, mean 1.53e-05
 
 - 计算量（仅计算矩阵乘）：(Q \* K.T)$2n^2d$ + (S \* V)$2n^2d$ = $4n^2d$ FLOPs
 - 通信量 (bf/fp16): (K)$2nb$+(V)$2nd$ = $4nd$ bytes
+- 显存占用：(current QKV)$3nd$+(received KV)$2nd$+(activation)$nd$ = $6nd$ bytes
 
 这样我们就能计算出计算访存比：$4n^2d/4nd = n$，我们可以列举出典型GPU的计算访存比
 
@@ -307,31 +311,45 @@ Rank[7] max 0.000488, mean 1.53e-05
 
 这样当 $n$ 大于 GPU 的设计计算访存比时，计算会成为瓶颈，此时可以设法将通信时间 overlap 掉。我们可以通过一个例子来感受这种差距
 
-下图为总长 4096 的序列，分到 8 个 device 上进行 ring attention 计算的 profile 图像，可以看到计算时间小于通信时间，因此通信时间成为了瓶颈
+下图为总长 4096*8 的序列，分到 8 个 device 上进行 ring attention 计算的 profile 图像，可以看到计算时间小于通信时间，因此通信时间成为了瓶颈
 
 ![alt text](./images/sl4096_rank7.png)
 
-而如果将总长度增加到 65536，则计算时间远小于通信时间，此时计算成为了瓶颈
+而如果将总长度增加到 65536*8，则计算时间远小于通信时间，此时计算成为了瓶颈
 
 ![alt text](./images/sl65536_rank7.png)
 
-那么 overlap 应该如何实现呢？在 GPU 中，设置 CUDA_DEVICE_MAX_CONNECTIONS=1，可以使NCCL通信在矩阵乘法运算（GEMM）之前被调度，以实现两者的重叠执行，提高整体性能。下图是序列长度 8192， CUDA_DEVICE_MAX_CONNECTIONS=1 的 profile 图像，可以看到通信时间已经被计算时间掩盖
+那么 overlap 应该如何实现呢？在 GPU 中，设置 CUDA_DEVICE_MAX_CONNECTIONS=1，可以使NCCL通信在矩阵乘法运算（GEMM）之前被调度，以实现两者的重叠执行，提高整体性能。下图是序列长度 8192*8， CUDA_DEVICE_MAX_CONNECTIONS=1 的 profile 图像，可以看到通信时间已经被计算时间掩盖
 
 ![alt text](./images/sl8192_rank7_overlap.png)
 
-接下来，我们记录一下这种方式下的性能数据（8*H100）
+接下来，我们记录一下这种方式下的性能数据（8*4090）
+| batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| 2 | 4096 | 16 | 128 | True | 158.892 | 6.294 | 228.1 | 21.8 |
+| 2 | 8192 | 16 | 128 | True | 98.868 | 10.115 | 456.1 | 54.3 |
+| 2 | 16384 | 16 | 128 | True | 31.829 | 31.418 | 912.2 | 69.9 |
+| 2 | 32768 | 16 | 128 | True | 10.862 |92.067 | 1824.5 | 95.5 |
+| 2 | 65536 | 16 | 128 | True | 4.799 | 208.391 | 3649 | 168.8 |
+| 2 | 128000 | 16 | 128 | True | 2.626 | 380.743 | 7139.9 | 352.5 |
+| 2 | 4096 | 16 | 128 | False | 45.368 | 22.042 | 240 | 21.8 |
+| 2 | 8192 | 16 | 128 | False | 21.449 | 46.622 | 480 | 41.2 |
+| 2 | 16384 | 16 | 128 | False | 5.047 | 198.147 | 960.2 | 38.8 |
+| 2 | 32768 | 16 | 128 | False | 2.116 | 472.596 | 1920.5 | 65.1 |
+| 2 | 65536 | 16 | 128 | False | 1.338 | 747.572 |  3841 | 164.7 |
+| 2 | 128000 | 16 | 128 | False | 0.708 | 1412.227 | 7515.9 | 332.6 |
+
+以下是（8*H100）的性能数据
 
 | batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
 | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
-| 2 | 4096 | 16 | 128 | True | 102.454 | 9.761 | 800 | 14.1 |
-| 8 | 4096 | 16 | 128 | True | 21.389 | 46.754 | 3202 | 11.7 |
-| 16 | 4096 | 16 | 128 | True | 9.561 | 104.597 | 6404 | 10.5 |
-| 64 | 4096 | 16 | 128 | True | 3.281 | 304.789 | 25616 | 14.4 |
-| 128 | 4096 | 16 | 128 | True | 1.335 | 748.936 | 51232 | 11.7 |
-| 2 | 8192 | 16 | 128 | True | 36.798 | 27.176 | 1601 | 20.2 |
-| 2 | 16384 | 16 | 128 | True | 9.066 | 110.306 | 3202 | 19.9 |
-| 2 | 32768 | 16 | 128 | True | 2.424 | 412.597 | 6404 | 21.3 |
-| 2 | 65536 | 16 | 128 | True | 0.643 | 1556.282 | 12808 | 22.6 |
+| 2 | 4096 | 16 | 128 | True | 70.399 | 14.205 | 800 | 9.7 |
+| 2 | 8192 | 16 | 128 | True | 25.839 | 38.701 | 1601 | 14.2 |
+| 2 | 16384 | 16 | 128 | True | 7.552 | 132.407 | 3202 | 16.6 |
+| 2 | 32768 | 16 | 128 | True | 2.308 | 433.209 | 6404 | 20.3 |
+| 2 | 65536 | 16 | 128 | True | 0.614 | 1628.487 | 12808 | 21.6 |
+| 2 | 128000 | 16 | 128 | True | 0.168 | 5983.8 | 25616 | 22.6 |
+| 2 | 4096 | 16 | 128 | False | 45.368 | 22.042 | 240 | 21.8 |
 | 2 | 8192 | 16 | 128 | False | 7.467 | 133.928 | 1601 | 14.367 |
 | 2 | 16384 | 16 | 128 | False | 1.865 | 536.319 | 3202 | 14.3 |
 | 2 | 32768 | 16 | 128 | False | 0.592 | 1689.044 | 6404 | 18.2 |
@@ -343,8 +361,169 @@ Rank[7] max 0.000488, mean 1.53e-05
 
 ![alt text](./images/ring_attention_fwd.png)
 
-这是因为划分之后不同 GPU 分配到的计算任务是不同的，如下图左所示。因此就有了 stripped ring attention，如下图右所示。
-![alt text](./images/strided_attention.png)
+对此，我们需要分析一下负载不均衡现象。在 ring attention 中，除了第一次迭代之外，在其他迭代中，只有部分设备的结果对最终的结果是有用的（unmasked），而其他设备的结果是无用的（masked），如下图所示：
+
+![alt text](./images/ring_attn_workflow.png)
+
+
+归根结底，这是因为按照朴素的顺序划分之后不同 GPU 分配到的计算任务是不同的，如下图左所示。因此就有了 Striped Attention，如下图右所示。
+Striped Attention ，它是 Ring Attention 的一种变体，它通过调整输入序列，几乎完全消除原始 Ring Attention 算法中存在的工作负载不平衡问题。
+具体而言，以 4 张卡为例，其划分的区别如下图所示：
+
+![alt text](./images/striped_attn_sequence.png)
+
+那么具体要怎么实现这种划分呢，以下是一种方式：
+```
+def extract_local(value, rank, world_size, dim=1):
+    value = torch.stack(value.split(world_size, dim=dim), dim=dim).transpose(dim, dim + 1)
+    slicer = [rank if i == dim else slice(None) for i in range(len(value.shape))]
+    return value[slicer].contiguous()
+```
+对于以下的world_size=8原始结果，其 rank 1 的片段为:
+```
+Original value:
+tensor([[[ 0,  1,  2],
+         [ 3,  4,  5],
+         [ 6,  7,  8],
+         [ 9, 10, 11],
+         [12, 13, 14],
+         [15, 16, 17],
+         [18, 19, 20],
+         [21, 22, 23],
+         [24, 25, 26],
+         [27, 28, 29],
+         [30, 31, 32],
+         [33, 34, 35],
+         [36, 37, 38],
+         [39, 40, 41],
+         [42, 43, 44],
+         [45, 46, 47]],
+
+        [[48, 49, 50],
+         [51, 52, 53],
+         [54, 55, 56],
+         [57, 58, 59],
+         [60, 61, 62],
+         [63, 64, 65],
+         [66, 67, 68],
+         [69, 70, 71],
+         [72, 73, 74],
+         [75, 76, 77],
+         [78, 79, 80],
+         [81, 82, 83],
+         [84, 85, 86],
+         [87, 88, 89],
+         [90, 91, 92],
+         [93, 94, 95]]])
+
+Local value for rank 1:
+tensor([[[ 3,  4,  5],
+         [27, 28, 29]],
+
+        [[51, 52, 53],
+         [75, 76, 77]]])
+```
+这样的划分就带来了计算上的区别，下图比较了朴素的 ring attention 和 stripe attention 在两个计算迭代上的区别
+
+![alt text](./images/workload_distribution.png)
+
+需要注意的是，在 KV 滑动过程中局部的 Attention mask 发生了变化，尽管仍然是下三角矩阵，但是对角线值也被 mask 掉了，下图展示了 mask 随着迭代过程变化的情况。在 flash_attn 中由于没有传入 mask 的接口，因此可以通过将 QKV 进行移位操作实现同样的效果，即 `q=q[:, 1:], k=k[:, :-1], v=v[:, :-1]` 
+
+![alt text](./images/stripe_attn_iteration.png)
+
+
+接下来我们看一下这种情况下的 profile, 仍然是选择 GPU 0,3,7，总的序列长度为 4096*8，可见负载处于完全均衡的状态：
+
+![alt text](./images/stripe_attn_profile.png)
+
+
+接下来，我们记录一下这种方式下的性能数据（8*4090）
+
+| batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| 2 | 4096 | 16 | 128 | True | 113.991 | 8.773 | 236 | 15.7 |
+| 2 | 8192 | 16 | 128 | True | 80.538 | 12.416 | 472 | 44.3 |
+| 2 | 16384 | 16 | 128 | True | 46.703 | 21.412 | 944 | 102.7 |
+| 2 | 32768 | 16 | 128 | True | 25.092 | 39.853 | 1888 | 220.7 |
+| 2 | 65536 | 16 | 128 | True | 11.288 | 88.587 | 3776 | 397.2 |
+| 2 | 128000 | 16 | 128 | True | 4.184 | 238.987 | 7376 | 561.6 |
+| 2 | 4096 | 16 | 128 | False | 41.932 | 23.848 | 244 | 20.2 |
+| 2 | 8192 | 16 | 128 | False | 24.535 | 40.758 | 488 | 47.2 |
+| 2 | 16384 | 16 | 128 | False | 12.787 | 78.203 | 976.7 | 98.4 |
+| 2 | 32768 | 16 | 128 | False | 6.438 | 155.339 | 1953.5 | 198.187 |
+| 2 | 65536 | 16 | 128 | False | 1.976 | 505.985 |  3907 | 243.4 |
+| 2 | 128000 | 16 | 128 | False | 0.976 | 1024.955 | 7636.8 | 458.3 |
+
+从数据可见，在长文本情况下，算力利用率提高了 50% 左右。
+
+## 3. 进一步优化 —— zigzag
+回顾一下以上两种版本，假设有一段长文本可以被分为 8 份, 假设在 4 个 GPU 上进行 ring attention 计算
+```
+L = [l0, l1, l2, l3, l4, l5, l6, l7]
+```
+那么对于朴素版，其划分是这样的：
+```
+   GPU0    GPU1    GPU2    GPU3
+| l0,l1 | l2,l3 | l4,l5 | l6,l7 |
+```
+对于 stripe 版，其划分是这样的：
+```
+   GPU0    GPU1    GPU2    GPU3
+| l0,l4 | l1,l5 | l2,l6 | l3,l7 |
+```
+
+现在我们期望其划分更加均匀，即以下这样的，即 zigzag 版：
+```
+   GPU0   GPU1    GPU2    GPU3
+| l0,l7 | l1,l6 | l2,l5 | l3,l4 |
+```
+
+首先即调整划分的方式为：
+```python
+def extract_local(value, rank, world_size, dim=1):
+    value_chunks = value.chunk(2 * world_size, dim=dim)
+    local_value = torch.cat([value_chunks[rank], value_chunks[2 * world_size - rank - 1]], dim=dim)
+    return local_value.contiguous()
+```
+![alt text](./images/zigzag_workflow.png)
+
+这样的划分带来了 mask 计算的区别, 事实上通过上图就已经可以看出计算的变化过程，但是为了清晰，我们不妨来绘制一下迭代过程的图像
+
+![alt text](./images/zigzag_iteration.png)
+
+以上过程通过3个分支判断即可实现，具体如下：
+```python
+        if step == 0:
+            block_out, block_lse = forward(q, k, v, causal=True)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+        elif step <= comm.rank:
+            k0 = k[:, :block_seq_len]
+            v0 = v[:, :block_seq_len]
+            block_out, block_lse = forward(q, k0, v0, causal=False)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+        else:
+            block_out, block_lse = forward(q1, k, v, causal=False)
+            out, lse = update_out_and_lse(out, lse, block_out, block_lse, slice_=(slice(None), slice(block_seq_len, None)),)
+```
+
+这样就完成了 zigzag ring attention 的实现，下面我们来测试一下其性能(8*4090)
+
+| batch_size | seq_len | nheads | head_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| 2 | 4096 | 16 | 128 | True | 810.253 | 1.234 | 188.1 | 111.4 |
+| 2 | 8192 | 16 | 128 | True | 1012.704 | 0.987 | 376.2 | 556.7 |
+| 2 | 16384 | 16 | 128 | True | 306.119 | 3.267 | 752.5 | 673.1 |
+| 2 | 32768 | 16 | 128 | True | 171.896 | 5.817 | 1505 | 1512 |
+| 2 | 65536 | 16 | 128 | True | 59.518 | 16.802 | 3010 | 2094.1 |
+| 2 | 128000 | 16 | 128 | True | 8.276 | 120.836 | 5891.9 |  1110.7 |
+| 2 | 256000 | 16 | 128 | True | 2.773 | 360.663 | 11757.8 |  1488.5 |
+| 2 | 4096 | 16 | 128 | False | 524.506 | 1.907 | 188.1 | 252.3 |
+| 2 | 8192 | 16 | 128 | False | 304.075 | 3.289 | 376.2 | 585.1 |
+| 2 | 16384 | 16 | 128 | False | 159.944 | 6.252 | 752.5 | 1231.0 |
+| 2 | 32768 | 16 | 128 | False | 58.840 | 16.995 | 1505 | 1811.4 |
+| 2 | 65536 | 16 | 128 | False | 17.210 | 58.107 | 3010 | 2119.2 |
+| 2 | 128000 | 16 | 128 | False | 2.545 | 392.983 | 5891.9 | 1195.4 |
+| 2 | 256000 | 16 | 128 | False | 0.928 | 1077.591 | 11757.8 | 1743.7 |
 
 
 # 参考资料
@@ -352,4 +531,4 @@ Rank[7] max 0.000488, mean 1.53e-05
 
 [2] https://zhuanlan.zhihu.com/p/683714620
 
-
+[3] https://arxiv.org/pdf/2406.18485
