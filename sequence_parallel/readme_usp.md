@@ -1,5 +1,6 @@
+# USP 性能基准
 
-好了，接下来可以改变参数记录下性能基准(设备为 8 * 4090D)(bs=2, nheads=16, head_size=16)，如下表所示：
+好了，接下来可以改变参数记录下USP性能基准(设备为 8 * 4090D)(bs=2, nheads=16, head_size=16)，如下表所示：
 
 - seq_len 与 ring attention type 的影响 
 
@@ -59,3 +60,24 @@
 | zigzag | 32768 | 2 | 4 | False | 5.714 | 175.013 | 1921 | 175.9 |
 | zigzag | 65536 | 2 | 4 | False | 2.134 | 468.519 | 3842.0 | 262.8 |
 | zigzag | 128000 | 2 | 4 | False | 1.170 | 854.512 | 7514.0 | 549.7 |
+
+
+# loongtrain double ring 性能基准
+
+接下来记录一下 Loongtrain double ring attention 的性能基准(设备为 8 * 4090D)(bs=2, nheads=16, head_size=16)，如下表所示：
+
+| ring type | seq_len | context_size | window_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| zigzag | 4096 | 8 | 4 | True | 57.112 | 17.509 | 228.1 | 7.8 |
+| zigzag | 8192 | 8 | 4 | True | 46.554 | 21.480 | 456.3 | 25.6 |
+| zigzag | 16384 | 8 | 4 | True | 30.797 | 32.471 | 912.7 | 67.7 |
+| zigzag | 32768 | 8 | 4 | True | 17.982 | 55.610 | 1825.5 | 158.2 |
+| zigzag | 65536 | 8 | 4 | True | 7.416 | 134.849 | 3651.0 | 260.9 |
+| zigzag | 128000 | 8 | 4 | True | 3.270 | 305.810 | 7145.8 | 438.8 |
+| zigzag | 4096 | 8 | 4 | False | 29.410 | 34.002 | 228.1 | 14.1 |
+| zigzag | 8192 | 8 | 4 | False | 18.230 | 54.853 | 456.4 | 35.1 |
+| zigzag | 16384 | 8 | 4 | False | 10.783 | 92.736 | 912.7 | 83.0 |
+| zigzag | 32768 | 8 | 4 | False | 5.580 | 179.200 | 1825.5 | 171.8 |
+| zigzag | 65536 | 8 | 4 | False | 1.774 | 563.702 | 3651.0 | 218.4 |
+| zigzag | 128000 | 8 | 4 | False | 0.998 | 1001.561 | 7145.8 | 469.0 |
+

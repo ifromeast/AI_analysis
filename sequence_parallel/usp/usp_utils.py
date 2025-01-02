@@ -35,12 +35,7 @@ def set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size, use
         for dp_rank in range(dp_degree):
             offset = dp_rank * sp_degree
             for i in range(num_ulysses_pgs):
-                ulysses_ranks = list(
-                    range(
-                        i * sp_ulysses_degree + offset,
-                        (i + 1) * sp_ulysses_degree + offset,
-                    )
-                )
+                ulysses_ranks = list(range(i * sp_ulysses_degree + offset, (i + 1) * sp_ulysses_degree + offset,))
                 group = torch.distributed.new_group(ulysses_ranks)
                 if rank in ulysses_ranks:
                     ulyssess_pg = group

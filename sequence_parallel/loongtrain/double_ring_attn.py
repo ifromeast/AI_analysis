@@ -3,9 +3,6 @@
 import torch
 import torch.distributed
 from flash_attn.flash_attn_interface import _flash_attn_backward, _flash_attn_forward
-
-from internlm.core.context.parallel_context import global_context as gpc
-
 from ring_flash_attention.rfa_utils import RingComm, update_out_and_lse
 
 fa_output_mapping = {}
@@ -16,10 +13,12 @@ def create_buffer(tensor):
     return torch.empty(buffer_shape, dtype=tensor.dtype, device=tensor.device)
 
 
+
 def zigzag_double_ring_flash_attn_forward(
-    ring_pg,
-    p2p_pg,
-    local_p2p_pg,
+    context_group,
+    inter_window_group,
+    intra_window_group,
+    double_ring_window_size,
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -31,44 +30,41 @@ def zigzag_double_ring_flash_attn_forward(
     deterministic=False,  # pylint: disable=W0613
 ):
     assert causal is True, "zigzag ring is meaningless for causal=False"
-    ring_comm = RingComm(ring_pg)
-    p2p_comm = RingComm(p2p_pg)
-    local_p2p_comm = RingComm(local_p2p_pg)
+    context_group = RingComm(context_group)
+    inter_window_group = RingComm(inter_window_group)
+    intra_window_group = RingComm(intra_window_group)
 
     block_seq_len = q.shape[1] // 2
 
     def forward(q, k, v, causal):
         block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
-            q,
-            k,
-            v,
-            dropout_p,
-            softmax_scale,
-            causal=causal,
-            return_softmax=True and dropout_p > 0,
-        )
+                                                                     q,
+                                                                     k,
+                                                                     v,
+                                                                     dropout_p,
+                                                                     softmax_scale,
+                                                                     causal=causal,
+                                                                     softcap=0.0,
+                                                                     window_size=window_size,
+                                                                     alibi_slopes=alibi_slopes,
+                                                                     return_softmax=True and dropout_p > 0,
+                                                                    )
         return block_out, block_lse
 
     def _first_window_forward(q, k, v):
         out = None
         lse = None
 
-        for step in range(local_p2p_comm.world_size):
-
-            if step + 1 != local_p2p_comm.world_size:
-                next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                next_v: torch.Tensor = local_p2p_comm.send_recv(v)
-                local_p2p_comm.commit()
+        for step in range(intra_window_group.world_size):
+            if step + 1 != intra_window_group.world_size:
+                next_k: torch.Tensor = intra_window_group.send_recv(k)
+                next_v: torch.Tensor = intra_window_group.send_recv(v)
+                intra_window_group.commit()
 
             if step == 0:
-                block_out, block_lse = forward(
-                    q,
-                    k,
-                    v,
-                    causal=True,
-                )
+                block_out, block_lse = forward(q, k, v, causal=True,)
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
-            elif step <= local_p2p_comm.rank:
+            elif step <= intra_window_group.rank:
                 k0 = k[:, :block_seq_len]
                 v0 = v[:, :block_seq_len]
                 block_out, block_lse = forward(q, k0, v0, causal=False)
@@ -76,16 +72,10 @@ def zigzag_double_ring_flash_attn_forward(
             else:
                 q1 = q[:, block_seq_len:]
                 block_out, block_lse = forward(q1, k, v, causal=False)
-                out, lse = update_out_and_lse(
-                    out,
-                    lse,
-                    block_out,
-                    block_lse,
-                    slice_=(slice(None), slice(block_seq_len, None)),
-                )
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse,slice_=(slice(None), slice(block_seq_len, None)),)
 
-            if step + 1 != local_p2p_comm.world_size:
-                local_p2p_comm.wait()
+            if step + 1 != intra_window_group.world_size:
+                intra_window_group.wait()
                 k = next_k
                 v = next_v
 
@@ -93,50 +83,42 @@ def zigzag_double_ring_flash_attn_forward(
 
     def _other_window_forward(out, lse, q, k, v, window_num_idx):
 
-        if window_num_idx > p2p_comm.rank:
+        if window_num_idx > inter_window_group.rank:
 
-            for step in range(local_p2p_comm.world_size):
-
-                if step + 1 != local_p2p_comm.world_size:
-                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
-                    local_p2p_comm.commit()
+            for step in range(intra_window_group.world_size):
+                if step + 1 != intra_window_group.world_size:
+                    next_k: torch.Tensor = intra_window_group.send_recv(k)
+                    next_v: torch.Tensor = intra_window_group.send_recv(v)
+                    intra_window_group.commit()
 
                 q1 = q[:, block_seq_len:]
                 block_out, block_lse = forward(q1, k, v, causal=False)
-                out, lse = update_out_and_lse(
-                    out,
-                    lse,
-                    block_out,
-                    block_lse,
-                    slice_=(slice(None), slice(block_seq_len, None)),
-                )
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse, slice_=(slice(None), slice(block_seq_len, None)),)
 
-                if step + 1 != local_p2p_comm.world_size:
-                    local_p2p_comm.wait()
+                if step + 1 != intra_window_group.world_size:
+                    intra_window_group.wait()
                     k = next_k
                     v = next_v
         else:
-            for step in range(local_p2p_comm.world_size):
-
-                if step + 1 != local_p2p_comm.world_size:
-                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
-                    local_p2p_comm.commit()
+            for step in range(intra_window_group.world_size):
+                if step + 1 != intra_window_group.world_size:
+                    next_k: torch.Tensor = intra_window_group.send_recv(k)
+                    next_v: torch.Tensor = intra_window_group.send_recv(v)
+                    intra_window_group.commit()
 
                 k0 = k[:, :block_seq_len]
                 v0 = v[:, :block_seq_len]
                 block_out, block_lse = forward(q, k0, v0, causal=False)
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
 
-                if step + 1 != local_p2p_comm.world_size:
-                    local_p2p_comm.wait()
+                if step + 1 != intra_window_group.world_size:
+                    intra_window_group.wait()
                     k = next_k
                     v = next_v
         return out, lse
  
-    window_size = 1 ###### gpc.config.parallel.sequence_2D.get("window_size", 1)
-    window_num = ring_comm.world_size // window_size
+    # window_size = 1 ###### gpc.config.parallel.sequence_2D.get("window_size", 1)
+    window_num = context_group.world_size // double_ring_window_size
 
     local_k = k
     local_v = v
@@ -144,14 +126,14 @@ def zigzag_double_ring_flash_attn_forward(
     for j in range(window_num):
 
         if j > 0:
-            p2p_comm.wait()
+            inter_window_group.wait()
             local_k = next_k
             local_v = next_v
 
         if j + 1 != window_num:
-            next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
-            next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
-            p2p_comm.commit()
+            next_k: torch.Tensor = inter_window_group.send_recv(local_k.contiguous())
+            next_v: torch.Tensor = inter_window_group.send_recv(local_v.contiguous())
+            inter_window_group.commit()
 
         if j == 0:
             out, lse = _first_window_forward(q, local_k, local_v)
@@ -170,6 +152,7 @@ def zigzag_double_ring_flash_attn_backward(
     intra_window_pg,
     dkv_inter_window_pg,
     dkv_intra_window_pg,
+    double_ring_window_size,
     dout,
     q,
     k,
@@ -204,19 +187,23 @@ def zigzag_double_ring_flash_attn_backward(
         seqlen_kv = k.shape[1]
         softmax_lse = softmax_lse.contiguous()
         _flash_attn_backward(
-            dout,
-            q,
-            k,
-            v,
-            out,
-            softmax_lse,
-            dq_buffer[:, :seqlen_q],
-            dk_buffer[:, :seqlen_kv],
-            dv_buffer[:, :seqlen_kv],
-            dropout_p,
-            softmax_scale,
-            causal,
-        )
+                            dout,
+                            q,
+                            k,
+                            v,
+                            out,
+                            softmax_lse,
+                            dq_buffer[:, :seqlen_q],
+                            dk_buffer[:, :seqlen_kv],
+                            dv_buffer[:, :seqlen_kv],
+                            dropout_p,
+                            softmax_scale,
+                            causal,
+                            softcap=0.0,
+                            window_size=window_size,
+                            alibi_slopes=alibi_slopes,
+                            deterministic=deterministic,
+                        )
 
     def _first_window_backward(dout, q, k, v, out, softmax_lse):
 
@@ -272,6 +259,7 @@ def zigzag_double_ring_flash_attn_backward(
         local_dkv_comm.wait()
 
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
+        # return dq.to(q.dtype), dk.to(q.dtype), dv.to(q.dtype)
 
     def _other_window_backward(dout, q, k, v, dq, dk, dv, out, softmax_lse, window_num_idx, inter_window_dkv_comm):
 
@@ -353,8 +341,8 @@ def zigzag_double_ring_flash_attn_backward(
 
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
 
-    window_size = 1 ####gpc.config.parallel.sequence_2D.get("window_size", 1)
-    window_num = context_comm.world_size // window_size
+    # window_size = 1 ####gpc.config.parallel.sequence_2D.get("window_size", 1)
+    window_num = context_comm.world_size // double_ring_window_size
 
     local_k = k
     local_v = v
@@ -377,14 +365,7 @@ def zigzag_double_ring_flash_attn_backward(
             dv = next_dv
 
         if j == 0:
-            dq, dk, dv = _first_window_backward(
-                dout,
-                q,
-                local_k,
-                local_v,
-                out,
-                softmax_lse,
-            )
+            dq, dk, dv = _first_window_backward(dout, q, local_k, local_v, out, softmax_lse,)
         else:
             dq, dk, dv = _other_window_backward(
                 dout,
@@ -434,7 +415,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         intra_window_group=None,
         dkv_inter_window_group=None,
         dkv_intra_window_group=None,
-        layer_idx=0,
+        double_ring_window_size=1,
     ):
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
@@ -443,25 +424,26 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         k = k.contiguous()
         v = v.contiguous()
 
-        if gpc.is_forward is False and gpc.config.selective_checkpoint:
-            assert layer_idx in fa_output_mapping
-            out, softmax_lse = fa_output_mapping.pop(layer_idx)
-        else:
-            out, softmax_lse = zigzag_double_ring_flash_attn_forward(
-                context_group,
-                inter_window_group,
-                intra_window_group,
-                q,
-                k,
-                v,
-                softmax_scale=softmax_scale,
-                dropout_p=dropout_p,
-                causal=causal,
-            )
+        # if gpc.is_forward is False and gpc.config.selective_checkpoint:
+        #     assert layer_idx in fa_output_mapping
+        #     out, softmax_lse = fa_output_mapping.pop(layer_idx)
+        # else:
+        out, softmax_lse = zigzag_double_ring_flash_attn_forward(
+                                                                 context_group,
+                                                                 inter_window_group,
+                                                                 intra_window_group,
+                                                                 double_ring_window_size,
+                                                                 q,
+                                                                 k,
+                                                                 v,
+                                                                 softmax_scale=softmax_scale,
+                                                                 dropout_p=dropout_p,
+                                                                 causal=causal,
+                                                            )
 
         # store attn forward output to avoid re-computation of attn when activation checkpoint is enabled
-        if gpc.is_forward and gpc.config.selective_checkpoint:
-            fa_output_mapping[layer_idx] = (out, softmax_lse)
+        # if gpc.is_forward and gpc.config.selective_checkpoint:
+        #     fa_output_mapping[layer_idx] = (out, softmax_lse)
 
         # this should be out_padded
         ctx.save_for_backward(q, k, v, out, softmax_lse)
@@ -476,71 +458,71 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         ctx.intra_window_group = intra_window_group
         ctx.dkv_inter_window_group = dkv_inter_window_group
         ctx.dkv_intra_window_group = dkv_intra_window_group
+        ctx.double_ring_window_size = double_ring_window_size
         return out if not return_softmax else (out, softmax_lse, None)
 
     @staticmethod
     def backward(ctx, dout, *args):  # pylint: disable=W0613
-
         q, k, v, out, softmax_lse = ctx.saved_tensors
-
         dq, dk, dv = zigzag_double_ring_flash_attn_backward(
-            ctx.context_group,
-            ctx.inter_window_group,
-            ctx.intra_window_group,
-            ctx.dkv_inter_window_group,
-            ctx.dkv_intra_window_group,
-            dout,
-            q,
-            k,
-            v,
-            out,
-            softmax_lse,
-            softmax_scale=ctx.softmax_scale,
-            dropout_p=ctx.dropout_p,
-            causal=ctx.causal,
-            window_size=ctx.window_size,
-            alibi_slopes=ctx.alibi_slopes,
-            deterministic=ctx.deterministic,
-        )
+                                                            ctx.context_group,
+                                                            ctx.inter_window_group,
+                                                            ctx.intra_window_group,
+                                                            ctx.dkv_inter_window_group,
+                                                            ctx.dkv_intra_window_group,
+                                                            ctx.double_ring_window_size,
+                                                            dout,
+                                                            q,
+                                                            k,
+                                                            v,
+                                                            out,
+                                                            softmax_lse,
+                                                            softmax_scale=ctx.softmax_scale,
+                                                            dropout_p=ctx.dropout_p,
+                                                            causal=ctx.causal,
+                                                            window_size=ctx.window_size,
+                                                            alibi_slopes=ctx.alibi_slopes,
+                                                            deterministic=ctx.deterministic,
+                                                        )
 
         return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 def zigzag_ring_flash_attn_kvpacked_func_with_sliding_window(
-    q,
-    kv,
-    dropout_p=0.0,
-    softmax_scale=None,
-    causal=False,
-    window_size=(-1, -1),
-    alibi_slopes=None,
-    deterministic=False,
-    return_attn_probs=False,
-    context_group=None,
-    inter_window_group=None,
-    intra_window_group=None,
-    dkv_inter_window_group=None,
-    dkv_intra_window_group=None,
-    layer_idx=0,
-):
+                                                            q,
+                                                            kv,
+                                                            dropout_p=0.0,
+                                                            softmax_scale=None,
+                                                            causal=False,
+                                                            window_size=(-1, -1),
+                                                            alibi_slopes=None,
+                                                            deterministic=False,
+                                                            return_attn_probs=False,
+                                                            context_group=None,
+                                                            inter_window_group=None,
+                                                            intra_window_group=None,
+                                                            dkv_inter_window_group=None,
+                                                            dkv_intra_window_group=None,
+                                                            double_ring_window_size=1,
+    ):
     return ZigZagRingFlashAttnFunc.apply(
-        q,
-        kv[:, :, 0],
-        kv[:, :, 1],
-        dropout_p,
-        softmax_scale,
-        causal,
-        window_size,
-        alibi_slopes,
-        deterministic,
-        return_attn_probs,
-        context_group,
-        inter_window_group,
-        intra_window_group,
-        dkv_inter_window_group,
-        dkv_intra_window_group,
-        layer_idx,
-    )
+                                        q,
+                                        kv[:, :, 0],
+                                        kv[:, :, 1],
+                                        dropout_p,
+                                        softmax_scale,
+                                        causal,
+                                        window_size,
+                                        alibi_slopes,
+                                        deterministic,
+                                        return_attn_probs,
+                                        context_group,
+                                        inter_window_group,
+                                        intra_window_group,
+                                        dkv_inter_window_group,
+                                        dkv_intra_window_group,
+                                        double_ring_window_size,
+                                    )
 
 
 def zigzag_ring_flash_attn_qkvpacked_func_with_sliding_window(
@@ -557,7 +539,7 @@ def zigzag_ring_flash_attn_qkvpacked_func_with_sliding_window(
     intra_window_group=None,
     dkv_inter_window_group=None,
     dkv_intra_window_group=None,
-    layer_idx=0,
+    double_ring_window_size=1,
 ):
     return ZigZagRingFlashAttnFunc.apply(
         qkv[:, :, 0],
@@ -575,11 +557,11 @@ def zigzag_ring_flash_attn_qkvpacked_func_with_sliding_window(
         intra_window_group,
         dkv_inter_window_group,
         dkv_intra_window_group,
-        layer_idx,
+        double_ring_window_size,
     )
 
 
-def zigzag_ring_flash_attn_qkvsplited_func_with_sliding_window(
+def zigzag_ring_flash_attn_func_with_sliding_window(
     q,
     k,
     v,
@@ -595,7 +577,7 @@ def zigzag_ring_flash_attn_qkvsplited_func_with_sliding_window(
     intra_window_group=None,
     dkv_inter_window_group=None,
     dkv_intra_window_group=None,
-    layer_idx=0,
+    double_ring_window_size=1,
 ):
     return ZigZagRingFlashAttnFunc.apply(
         q,
@@ -613,5 +595,5 @@ def zigzag_ring_flash_attn_qkvsplited_func_with_sliding_window(
         intra_window_group,
         dkv_inter_window_group,
         dkv_intra_window_group,
-        layer_idx,
+        double_ring_window_size,
     )
