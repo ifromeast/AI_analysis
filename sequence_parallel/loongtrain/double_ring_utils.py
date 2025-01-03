@@ -261,9 +261,9 @@ if __name__ == "__main__":
     res = generate_2d_attn_process_group(
                                     world_size,
                                     rank,
-                                    head_size=2,
-                                    context_size=4,
-                                    window_size=4,
+                                    head_size=1,
+                                    context_size=8,
+                                    window_size=2,
                                     head_first=True,
                                     interleaved=False,
                                     sp_size=8,
