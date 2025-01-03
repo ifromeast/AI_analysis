@@ -45,7 +45,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
 
     # prepare process group for double ring attention sequence parallelism
     context_parallel_size = 8
-    double_ring_window_size = 4
+    double_ring_window_size = args.window_size
 
     group_results = generate_2d_attn_process_group(
         world_size,
@@ -103,7 +103,7 @@ def benchmark(f, num_iter=100, forward_only=True, log=True, profile=False):
             with_modules=True,
             with_stack=True,
             on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                f"./benchmark/profiles/{f.__name__}_bs_{batch_size}_seq_{seqlen}_heads_{nheads}_d_{d}_rank_{dist.get_rank()}_fwd_only_{forward_only}"
+                f"./benchmark/profiles/{f.__name__}_bs_{batch_size}_seq_{seqlen}_heads_{nheads}_d_{d}_rank_{dist.get_rank()}_fwd_only_{forward_only}_window_size_{double_ring_window_size}"
             ),
         )
 
@@ -219,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--profile", action="store_true", help="generate torch profile or not"
     )
+    parser.add_argument("--window_size", type=int, default=2, help="window size")
     args = parser.parse_args()
 
     torch.cuda.empty_cache()

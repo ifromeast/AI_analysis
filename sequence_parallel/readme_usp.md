@@ -81,3 +81,14 @@
 | zigzag | 65536 | 8 | 4 | False | 1.774 | 563.702 | 3651.0 | 218.4 |
 | zigzag | 128000 | 8 | 4 | False | 0.998 | 1001.561 | 7145.8 | 469.0 |
 
+
+- 与 window_size 的关系
+
+| ring type | seq_len | context_size | window_size | fwd_only | throughput(iters/s) | latency(ms/iter) | peak memory(MB/device) | speed(TFLOPS) |
+| :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: | :----: |
+| zigzag | 4096 | 8 | 4 | True | 71.676 | 13.952 | 228.1 | 9.8 |
+| zigzag | 8192 | 8 | 4 | True | 52.277 | 19.129 | 456.3 | 28.7 |
+| zigzag | 16384 | 8 | 4 | True | 31.828 | 31.419 | 912.7 | 69.9 |
+| zigzag | 32768 | 8 | 4 | True | 17.982 | 50.553 | 1825.5 | 173.9 |
+| zigzag | 65536 | 8 | 4 | True | 8.186 | 122.157 | 3651.0 | 288.0 |
+| zigzag | 128000 | 8 | 4 | True | 3.206 | 311.917 | 7144.8 | 430.3 |
