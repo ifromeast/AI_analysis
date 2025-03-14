@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from deepseek.configuration_deepseek import DeepseekV2Config 
-from deepseek.modeling_deepseek import DeepseekV2MoE
+from deepseek.modeling_deepseek import DeepseekV2DecoderLayer
 
 
 
@@ -38,7 +38,7 @@ def init_parallel_groups(ep_size=1):
 
 if __name__ == "__main__":
     ep_size = 8
-    batch_size = 8
+    batch_size = 2
     seq_length = 4096
     only_forward = False
 
@@ -50,13 +50,14 @@ if __name__ == "__main__":
 
     config = DeepseekV2Config(**config_dict)
     config.ep_size = ep_size
-    dsv2_moe = DeepseekV2MoE(config).to(device)
+    config._attn_implementation = "flash_attention_2"
+    dsv2_layer = DeepseekV2DecoderLayer(config, layer_idx=10).to(torch.float16).to(device)
 
-    input_x = torch.randn(batch_size, seq_length, config.hidden_size).to(device)
-    dout = torch.randn(batch_size, seq_length, config.hidden_size).to(device)
+    input_x = torch.randn(batch_size, seq_length, config.hidden_size).to(torch.float16).to(device)
+    dout = torch.randn(batch_size, seq_length, config.hidden_size).to(torch.float16).to(device)
 
-    moe_outputs = dsv2_moe(input_x) # warmup
-    moe_outputs.backward(dout)
+    layer_outputs = dsv2_layer(input_x)[0]    # warmup
+    layer_outputs.backward(dout)
 
     torch.backends.cudnn.benchmark = True
     profiler = torch.profiler.profile(
@@ -68,7 +69,7 @@ if __name__ == "__main__":
         with_modules=True,
         with_stack=True,
         on_trace_ready=torch.profiler.tensorboard_trace_handler(
-            f"./profiles/dsv2moe_ep_bs_{batch_size}_seq_{seq_length}_rank_{local_rank}_{'fwd' if only_forward else 'fwd_bwd'}"
+            f"./profiles/dsv2layer_ep_bs_{batch_size}_seq_{seq_length}_rank_{local_rank}_{'fwd' if only_forward else 'fwd_bwd'}"
         ),
     )
     profiler.start()
@@ -79,10 +80,10 @@ if __name__ == "__main__":
     for i in range(8):
         if only_forward:
             with torch.no_grad():
-                moe_outputs = dsv2_moe(input_x)
+                layer_outputs = dsv2_layer(input_x)
         else:
-            moe_outputs = dsv2_moe(input_x)
-            moe_outputs.backward(dout)
+            layer_outputs = dsv2_layer(input_x)[0]
+            layer_outputs.backward(dout)
         profiler.step()
 
     end = torch.cuda.Event(enable_timing=True)
