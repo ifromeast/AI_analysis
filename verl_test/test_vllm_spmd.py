@@ -4,6 +4,7 @@ sys.path.append("/data/zzd/verl")
 import os
 
 import torch
+import torch.distributed as dist
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import ShardedStateDictConfig, ShardingStrategy, StateDictType
@@ -92,6 +93,26 @@ def test_vllm_spmd():
     input_ids = input_ids.cuda()
     attention_mask = attention_mask.cuda()
 
+    from transformers import GenerationConfig
+
+    generation_config = GenerationConfig(do_sample=False)
+    actor_model.cuda()
+    output = actor_model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        # max_new_tokens=32,
+        # max_length=max_length,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
+        generation_config=generation_config,
+        # renormalize_logits=True,
+        output_scores=False,  # this is potentially very large
+        return_dict_in_generate=True,
+        use_cache=False,
+    )  # may OOM when use_cache = True
+    response = output.sequences
+    print(f"hf response: {tokenizer.batch_decode(response)}")
+
     temperature = 0
     top_p = 1
     kwargs = dict(n=1, temperature=temperature, top_p=top_p, max_tokens=max_response_length, logprobs=1, ignore_eos=True)
@@ -143,7 +164,7 @@ def test_vllm_spmd():
         generated_text = output.outputs[0].text
         vllm_response_tokens.append(generated_text)
 
-    world_size = torch.distributed.get_world_size()
+    world_size = dist.get_world_size()
     model = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model
     model.load_weights(
         ((name, param.full_tensor() if world_size != 1 else param) for name, param in state_dict.items())
@@ -155,12 +176,14 @@ def test_vllm_spmd():
         generated_text = output.outputs[0].text
         verl_vllm_response_tokens.append(generated_text)
 
-    if torch.distributed.get_rank() == 0:
+    if dist.get_rank() == 0:
         print(f"vllm response: {vllm_response_tokens}")
         print(f"verl-vllm response: {verl_vllm_response_tokens}")
     assert are_lists_similar(vllm_response_tokens, verl_vllm_response_tokens), "Strings differ more than 10%:\n"
-    print("Check Pass!")
-    torch.distributed.destroy_process_group()
+    print("Check Passed!")
+    torch.cuda.empty_cache()
+    dist.barrier()
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":
