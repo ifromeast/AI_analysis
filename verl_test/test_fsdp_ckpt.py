@@ -1,6 +1,6 @@
 
 import sys
-sys.path.append("/data/zzd/verl")
+sys.path.append("/data2/zzd/rl_llm/verl")
 
 import os
 import shutil
@@ -11,6 +11,7 @@ import torch.distributed as dist
 from torch.distributed import init_device_mesh
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
+from torch.distributed.fsdp.api import ShardedStateDictConfig, StateDictType
 from transformers import AutoModelForCausalLM, AutoTokenizer, Qwen2Config
 
 from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
@@ -22,8 +23,8 @@ def test_fsdp_ckpt(profile=True):
     local_rank, rank, world_size = initialize_global_process_group()
     device_mesh = init_device_mesh("cuda", mesh_shape=(world_size,), mesh_dim_names=("dp",))
 
-    model_name = "/nfs/models/Qwen/Qwen2.5-0.5B-Instruct"
-    config = Qwen2Config(num_hidden_layers=8)
+    model_name = "/data3/ckpt/Qwen/Qwen2.5-0.5B-Instruct"
+    config = Qwen2Config(num_hidden_layers=4)
 
     with torch.device("cuda"):
         model = AutoModelForCausalLM.from_config(
@@ -42,6 +43,11 @@ def test_fsdp_ckpt(profile=True):
         mixed_precision=mixed_precision,
         device_mesh=device_mesh,
     )
+    # FSDP.set_state_dict_type(
+    #     model, state_dict_type=StateDictType.SHARDED_STATE_DICT, state_dict_config=ShardedStateDictConfig()
+    # )
+    # state_dict = model.state_dict()
+    # print(f"rank: {rank}, FSDP model state dict: {state_dict}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
