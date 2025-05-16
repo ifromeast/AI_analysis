@@ -103,7 +103,7 @@ class RoutedSandbox:
 if __name__ == "__main__":
     # for local testing launch an E2B router with: python e2b_router.py
     sbx = RoutedSandbox(router_url="0.0.0.0:8001")
-    codes = ["print('hello world')", "print('hello world)"]
+    codes = ["print('hello world')", "import math\nprint(math.sqrt(3*2+10))"]
     executions = sbx.run_code(codes)  # Execute Python inside the sandbox
 
     print(executions)
