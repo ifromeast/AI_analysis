@@ -14,6 +14,3 @@ start ray at worker node by
 ray start --address='10.157.150.10:6379'
 ```
 
-
-
-
