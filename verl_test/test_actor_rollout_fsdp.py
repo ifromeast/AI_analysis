@@ -20,9 +20,6 @@ def get_config():
     config.data.max_prompt_length=128
     config.data.filter_overlong_prompts=True
     config.actor_rollout_ref.model.path="/data3/ckpt/Qwen/Qwen2.5-3B-Instruct"
-    # config.reward_model.model.input_tokenizer="/data3/ckpt/sfairXC/FsfairX-LLaMA3-RM-v0.1"
-    # config.reward_model.model.path="/data3/ckpt/sfairXC/FsfairX-LLaMA3-RM-v0.1"
-    # config.reward_model.micro_batch_size_per_gpu=8
     return config
 
 config = get_config()
