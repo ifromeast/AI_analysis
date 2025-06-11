@@ -18,7 +18,7 @@ from verl.utils import hf_tokenizer
 
 def init_config() -> DictConfig:
     config = OmegaConf.load("/data2/zzd/rl_llm/verl/verl/trainer/config/ppo_trainer.yaml")
-    model_path = "/data3/ckpt/Qwen/Qwen2.5-7B-Instruct"
+    model_path = "/data3/ckpt/Qwen/Qwen3-8B"
     config.actor_rollout_ref.model.path = model_path
     config.actor_rollout_ref.rollout.mode = "async"
     config.actor_rollout_ref.rollout.multi_turn.format = "hermes"
