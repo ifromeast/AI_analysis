@@ -1,5 +1,7 @@
 import sys
-sys.path.append("/data/zzd/verl")
+
+VERL_PATH = "/data2/zzd/rl_llm/verl"
+sys.path.append(VERL_PATH)
 
 import json
 import os
@@ -15,9 +17,22 @@ from verl.protocol import DataProto
 from verl.tools.base_tool import BaseTool, OpenAIFunctionToolSchema
 from verl.utils import hf_tokenizer
 
+
+
 def init_config() -> DictConfig:
-    config = OmegaConf.load("/data/zzd/verl/verl/trainer/config/ppo_trainer.yaml")
-    model_path = "/data/zzd/ckpt/Qwen/Qwen2.5-1.5B-Instruct"
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(config_dir=os.path.abspath(f"{VERL_PATH}/verl/trainer/config")):
+        config = compose(
+            config_name="ppo_trainer",
+            overrides=[
+                "actor_rollout_ref.actor.use_dynamic_bsz=true",
+                # test sleep/wake_up with fsdp offload
+                "actor_rollout_ref.actor.fsdp_config.param_offload=True",
+                "actor_rollout_ref.actor.fsdp_config.optimizer_offload=True",
+            ],
+        )
+    model_path = "/data3/ckpt/Qwen/Qwen2.5-3B-Instruct"
     config.actor_rollout_ref.model.path = model_path
     config.actor_rollout_ref.rollout.name = os.getenv("ROLLOUT_NAME", "vllm")
     config.actor_rollout_ref.rollout.mode = "async"
@@ -41,7 +56,7 @@ def test_tool_agent(init_config):
                 "VLLM_LOGGING_LEVEL": "INFO",
                 "VLLM_USE_V1": "1",
             },
-            "working_dir": "/data/zzd/verl",
+            "working_dir": VERL_PATH,
         }
     )
 
@@ -58,7 +73,7 @@ def test_tool_agent(init_config):
             },
         ]
     }
-    tool_config_path = "/data/zzd/AI_analysis/verl_test/agent_test/tool_config.json"
+    tool_config_path = "/data2/zzd/tools/AI_analysis/verl_test/agent_test/tool_config.json"
     with open(tool_config_path, "w") as f:
         json.dump(tool_config, f)
 
@@ -70,23 +85,11 @@ def test_tool_agent(init_config):
 
     # =========================== 2. Generate sequences  ===========================
     raw_prompts = [
-        [
-            {"role": "user", "content": "How are you?"},
-        ],
-        [
-            {"role": "user", "content": "What's the temperature in Los Angeles now?"},
-        ],
-        [
-            {"role": "user", "content": "What's the temperature in New York now?"},
-        ],
-        [
-            {
-                "role": "system",
-                "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.\n\n"
-                "Current Date: 2024-09-30",
-            },
-            {"role": "user", "content": "What's the temperature in San Francisco now? How about tomorrow?"},
-        ],
+        [{"role": "user", "content": "How are you?"},],
+        [{"role": "user", "content": "What's the temperature in Los Angeles now?"},],
+        [{"role": "user", "content": "What's the temperature in New York now?"},],
+        [{"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.\n\nCurrent Date: 2024-09-30",},
+         {"role": "user", "content": "What's the temperature in San Francisco now? How about tomorrow?"},],
     ]
     batch = DataProto(
         non_tensor_batch={
@@ -94,6 +97,7 @@ def test_tool_agent(init_config):
             "agent_name": np.array(["tool_agent"] * len(raw_prompts)),
         },
     )
+    batch = batch.repeat(n)
     result = agent_loop_manager.generate_sequences(prompts=batch)
     assert len(result) == len(raw_prompts) * n
 
@@ -112,15 +116,25 @@ def test_tool_agent(init_config):
     tokenizer = hf_tokenizer(init_config.actor_rollout_ref.model.path)
     responses = result.batch["responses"]
     response_mask = result.batch["response_mask"]
+    attention_mask = result.batch["attention_mask"]
     assert responses.size() == response_mask.size(), f"{responses.size()} != {response_mask.size()}"
+    response_length = response_mask.size(1)
 
     # Decode responses with response_mask
     for i in range(len(responses)):
+        valid_tokens = responses[i][response_mask[i][-response_length:].bool()]
+        response_with_obs = tokenizer.decode(valid_tokens)
+
+        # response without tool response
         valid_tokens = responses[i][response_mask[i].bool()]
-        response_str = tokenizer.decode(valid_tokens)
-        assert "<tool_response>" not in response_str, f"found <tool_response> in response: {response_str}"
-        assert "</tool_response>" not in response_str, f"found </tool_response> in response: {response_str}"
-        print(f"response: {response_str}")
+        response_without_obs = tokenizer.decode(valid_tokens)
+
+        assert "<tool_response>" not in response_without_obs, (f"found <tool_response> in response: {response_without_obs}")
+        assert "</tool_response>" not in response_without_obs, (f"found </tool_response> in response: {response_without_obs}")
+        print("============response_with_obs=============")
+        print(response_with_obs)
+        print("------------response_without_obs-------------")
+        print(response_without_obs)
 
     print("Test passed!")
     ray.shutdown()
@@ -129,5 +143,4 @@ def test_tool_agent(init_config):
 if __name__ == "__main__":
     init_config = init_config()
     test_tool_agent(init_config)
-    # Uncomment the line below to run the agent single turn test
-    # test_single_turn(init_config)
+    print("✅ All tests passed!")

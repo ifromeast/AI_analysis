@@ -1,5 +1,6 @@
 import sys
-sys.path.append("/data/zzd/verl")
+VERL_PATH = "/data2/zzd/rl_llm/verl"
+sys.path.append(VERL_PATH)
 
 import json
 import os
@@ -16,8 +17,19 @@ from verl.tools.base_tool import BaseTool, OpenAIFunctionToolSchema
 from verl.utils import hf_tokenizer
 
 def init_config() -> DictConfig:
-    config = OmegaConf.load("/data/zzd/verl/verl/trainer/config/ppo_trainer.yaml")
-    model_path = "/data/zzd/ckpt/Qwen/Qwen2.5-1.5B-Instruct"
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(config_dir=os.path.abspath(f"{VERL_PATH}/verl/trainer/config")):
+        config = compose(
+            config_name="ppo_trainer",
+            overrides=[
+                "actor_rollout_ref.actor.use_dynamic_bsz=true",
+                # test sleep/wake_up with fsdp offload
+                "actor_rollout_ref.actor.fsdp_config.param_offload=True",
+                "actor_rollout_ref.actor.fsdp_config.optimizer_offload=True",
+            ],
+        )
+    model_path = "/data3/ckpt/Qwen/Qwen2.5-1.5B-Instruct"
     config.actor_rollout_ref.model.path = model_path
     config.actor_rollout_ref.rollout.name = os.getenv("ROLLOUT_NAME", "vllm")
     config.actor_rollout_ref.rollout.mode = "async"
@@ -42,7 +54,7 @@ def test_single_turn(init_config):
                 "VLLM_LOGGING_LEVEL": "INFO",
                 "VLLM_USE_V1": "1",
             },
-            "working_dir": "/data/zzd/verl",  # 工作目录（会上传到集群）
+            "working_dir": VERL_PATH,  # 工作目录（会上传到集群）
         }
     )
 
@@ -61,8 +73,11 @@ def test_single_turn(init_config):
     )
 
     print("Generating sequences by agent...")
+    n = init_config.actor_rollout_ref.rollout.n
+    batch = batch.repeat(n)
     result = agent_loop_manager.generate_sequences(prompts=batch)
     print(result.batch["responses"])
+    assert len(result) == len(raw_prompts) * n
 
     # decode responses
     tokenizer = hf_tokenizer(init_config.actor_rollout_ref.model.path)
@@ -72,7 +87,6 @@ def test_single_turn(init_config):
         valid_tokens = responses[i][response_mask[i].bool()]
         response_str = tokenizer.decode(valid_tokens)
         print(f"response {i}: {response_str}")
-    assert len(result) == len(raw_prompts) * init_config.actor_rollout_ref.rollout.n
 
     # check result
     seq_len = result.batch["prompts"].size(1) + result.batch["responses"].size(1)
